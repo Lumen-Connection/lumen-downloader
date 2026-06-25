@@ -1,0 +1,242 @@
+use egui::Stroke;
+
+use crate::app::App;
+use crate::ui::i18n::Lang;
+use crate::ui::theme;
+
+struct Badge {
+    icon: &'static str,
+    name: String,
+    desc: String,
+    unlocked: bool,
+}
+
+/// Constrói a lista completa de conquistas a partir das métricas.
+fn build_badges(pt: bool, total: i64, mc: i64, vc: i64, cc: i64) -> Vec<Badge> {
+    let mut v: Vec<Badge> = Vec::new();
+    let tr = |p: &str, e: &str| if pt { p.to_string() } else { e.to_string() };
+
+    // --- Marcos de total de downloads ---
+    let total_tiers: &[(i64, &str, &str)] = &[
+        (1, "Iniciante", "Beginner"),
+        (5, "Aprendiz", "Apprentice"),
+        (10, "Colecionador", "Collector"),
+        (25, "Entusiasta", "Enthusiast"),
+        (50, "Veterano", "Veteran"),
+        (75, "Experiente", "Experienced"),
+        (100, "Centurião", "Centurion"),
+        (150, "Dedicado", "Dedicated"),
+        (200, "Mestre", "Master"),
+        (300, "Grão-mestre", "Grandmaster"),
+        (400, "Lenda", "Legend"),
+        (500, "Mítico", "Mythic"),
+        (750, "Épico", "Epic"),
+        (1000, "Milenar", "Millennial"),
+        (1500, "Imortal", "Immortal"),
+        (2000, "Divino", "Divine"),
+        (3000, "Titânico", "Titanic"),
+        (5000, "Cósmico", "Cosmic"),
+        (7500, "Galáctico", "Galactic"),
+        (10000, "Universal", "Universal"),
+    ];
+    for (n, p, e) in total_tiers {
+        v.push(Badge {
+            icon: "🏆",
+            name: tr(p, e),
+            desc: format!("{} downloads", n),
+            unlocked: total >= *n,
+        });
+    }
+
+    // --- Música ---
+    let music_tiers: &[(i64, &str, &str)] = &[
+        (1, "Ouvinte", "Listener"),
+        (5, "Fã", "Fan"),
+        (10, "Melômano", "Audiophile"),
+        (25, "DJ", "DJ"),
+        (50, "Maestro", "Maestro"),
+        (100, "Discoteca", "Disco"),
+        (200, "Fonoteca", "Sound library"),
+        (500, "Lenda musical", "Music legend"),
+        (1000, "Imortal sonoro", "Sound immortal"),
+    ];
+    for (n, p, e) in music_tiers {
+        v.push(Badge {
+            icon: "🎧",
+            name: tr(p, e),
+            desc: if pt { format!("{} músicas", n) } else { format!("{} songs", n) },
+            unlocked: mc >= *n,
+        });
+    }
+
+    // --- Vídeo ---
+    let video_tiers: &[(i64, &str, &str)] = &[
+        (1, "Espectador", "Viewer"),
+        (5, "Cinéfilo", "Cinephile"),
+        (10, "Diretor", "Director"),
+        (25, "Produtor", "Producer"),
+        (50, "Maratonista", "Binge-watcher"),
+        (100, "Crítico", "Critic"),
+        (200, "Cineasta", "Filmmaker"),
+        (500, "Lenda do cinema", "Cinema legend"),
+        (1000, "Imortal do cinema", "Cinema immortal"),
+    ];
+    for (n, p, e) in video_tiers {
+        v.push(Badge {
+            icon: "🎬",
+            name: tr(p, e),
+            desc: if pt { format!("{} vídeos", n) } else { format!("{} videos", n) },
+            unlocked: vc >= *n,
+        });
+    }
+
+    // --- Conversões ---
+    let convert_tiers: &[(i64, &str, &str)] = &[
+        (1, "Conversor", "Converter"),
+        (3, "Alquimista", "Alchemist"),
+        (5, "Transformador", "Transformer"),
+        (10, "Engenheiro", "Engineer"),
+        (25, "Reformulador", "Reshaper"),
+        (50, "Mágico", "Magician"),
+        (100, "Camaleão", "Chameleon"),
+        (200, "Arquimago", "Archmage"),
+        (500, "Onipotente", "Omnipotent"),
+    ];
+    for (n, p, e) in convert_tiers {
+        v.push(Badge {
+            icon: "🔄",
+            name: tr(p, e),
+            desc: if pt { format!("{} conversões", n) } else { format!("{} conversions", n) },
+            unlocked: cc >= *n,
+        });
+    }
+
+    // --- Combos / especiais ---
+    let combos: &[(&str, &str, &str, &str, &str, bool)] = &[
+        ("🎉", "Estreia", "Debut", "Seu 1º download", "Your 1st download", total >= 1),
+        ("🧩", "Tripé", "Tripod", "1 de cada tipo", "1 of each type", mc >= 1 && vc >= 1 && cc >= 1),
+        ("🎛", "Versátil", "Versatile", "5 de cada tipo", "5 of each type", mc >= 5 && vc >= 5 && cc >= 5),
+        ("⚖", "Equilíbrio", "Balance", "10 de cada tipo", "10 of each type", mc >= 10 && vc >= 10 && cc >= 10),
+        ("🍽", "Onívoro", "Omnivore", "25 de cada tipo", "25 of each type", mc >= 25 && vc >= 25 && cc >= 25),
+        ("🧠", "Mestre multimídia", "Multimedia master", "20 de cada tipo", "20 of each type", mc >= 20 && vc >= 20 && cc >= 20),
+        ("📺", "Multimídia", "Multimedia", "50 músicas e 50 vídeos", "50 songs & 50 videos", mc >= 50 && vc >= 50),
+        ("🎯", "Trifeta", "Trifecta", "100 músicas, 100 vídeos, 50 conversões", "100 songs, 100 videos, 50 conversions", mc >= 100 && vc >= 100 && cc >= 50),
+        ("🔥", "Em chamas", "On fire", "50 downloads", "50 downloads", total >= 50),
+        ("🏃", "Maratona", "Marathon", "250 downloads", "250 downloads", total >= 250),
+        ("🌟", "Lenda viva", "Living legend", "500 downloads", "500 downloads", total >= 500),
+        ("🚀", "Fora de série", "Off the charts", "2000 downloads", "2000 downloads", total >= 2000),
+        ("♾", "Insaciável", "Insatiable", "5000 downloads", "5000 downloads", total >= 5000),
+    ];
+    for (icon, np, ne, dp, de, unlocked) in combos {
+        v.push(Badge {
+            icon,
+            name: tr(np, ne),
+            desc: tr(dp, de),
+            unlocked: *unlocked,
+        });
+    }
+
+    v
+}
+
+pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
+    let s = crate::ui::i18n::s(app.config.lang);
+    let pt = app.config.lang == Lang::Pt;
+
+    let (mc, _) = app.db.stats("music");
+    let (vc, _) = app.db.stats("video");
+    let (cc, _) = app.db.stats("convert");
+    let total = mc + vc + cc;
+
+    ui.label(
+        egui::RichText::new(s.nav_achievements)
+            .color(theme::text())
+            .size(30.0)
+            .strong(),
+    );
+    ui.label(
+        egui::RichText::new(if pt {
+            "Desbloqueie conquistas usando o Lumen."
+        } else {
+            "Unlock achievements as you use Lumen."
+        })
+        .color(theme::text_muted())
+        .size(14.0),
+    );
+    ui.add_space(20.0);
+
+    let badges = build_badges(pt, total, mc, vc, cc);
+
+    let done = badges.iter().filter(|b| b.unlocked).count();
+    ui.label(
+        egui::RichText::new(format!(
+            "{} {} / {}",
+            if pt { "Desbloqueadas:" } else { "Unlocked:" },
+            done,
+            badges.len()
+        ))
+        .color(theme::text_faint())
+        .size(12.0),
+    );
+    ui.add_space(12.0);
+
+    // Grade de cartões: calcula colunas pela largura disponível e quebra em linhas.
+    let avail = ui.available_width();
+    let col_w = 150.0 + 28.0 + 12.0; // largura + margens + espaçamento
+    let cols = ((avail / col_w).floor() as usize).max(1);
+
+    egui::Grid::new("badges_grid")
+        .spacing(egui::vec2(12.0, 12.0))
+        .show(ui, |ui| {
+            for (i, b) in badges.iter().enumerate() {
+                badge_card(ui, b, pt);
+                if (i + 1) % cols == 0 {
+                    ui.end_row();
+                }
+            }
+        });
+}
+
+fn badge_card(ui: &mut egui::Ui, b: &Badge, pt: bool) {
+    let (fill, brd, icon_col, name_col) = if b.unlocked {
+        (theme::accent_soft(), theme::accent(), theme::accent(), theme::text())
+    } else {
+        (theme::bg_card(), theme::border(), theme::text_faint(), theme::text_faint())
+    };
+
+    egui::Frame::none()
+        .fill(fill)
+        .rounding(egui::Rounding::same(theme::CARD_ROUNDING))
+        .stroke(Stroke::new(1.0, brd))
+        .inner_margin(egui::Margin::same(14.0))
+        .show(ui, |ui| {
+            ui.set_width(150.0);
+            ui.set_height(120.0);
+            ui.vertical_centered(|ui| {
+                ui.label(egui::RichText::new(b.icon).size(34.0).color(icon_col));
+                ui.add_space(2.0);
+                ui.label(
+                    egui::RichText::new(b.name.as_str())
+                        .size(14.0)
+                        .strong()
+                        .color(name_col),
+                );
+                ui.label(
+                    egui::RichText::new(b.desc.as_str())
+                        .size(11.0)
+                        .color(if b.unlocked {
+                            theme::text_muted()
+                        } else {
+                            theme::text_faint()
+                        }),
+                );
+                ui.add_space(4.0);
+                let (status, col) = if b.unlocked {
+                    (if pt { "✔ Conquistado" } else { "✔ Unlocked" }, theme::accent())
+                } else {
+                    (if pt { "🔒 Bloqueado" } else { "🔒 Locked" }, theme::text_faint())
+                };
+                ui.label(egui::RichText::new(status).size(11.0).strong().color(col));
+            });
+        });
+}

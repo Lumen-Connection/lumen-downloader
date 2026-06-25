@@ -1,0 +1,17 @@
+pub mod achievements_tab;
+pub mod cloud_tab;
+pub mod command;
+pub mod converter_tab;
+pub mod dashboard;
+pub mod folders_tab;
+pub mod gallery_tab;
+pub mod history;
+pub mod help_tab;
+pub mod home_tab;
+pub mod i18n;
+pub mod music_tab;
+pub mod queue_tab;
+pub mod settings_tab;
+pub mod stats_tab;
+pub mod theme;
+pub mod video_tab;

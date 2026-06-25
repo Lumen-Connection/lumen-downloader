@@ -1,0 +1,1379 @@
+use egui::Color32;
+
+use crate::app::{App, DownloadPhase, MediaType, Tab};
+use crate::ui::theme;
+
+
+pub fn render(app: &mut App, ctx: &egui::Context) {
+    render_sidebar(app, ctx);
+
+    egui::CentralPanel::default()
+        .frame(
+            egui::Frame::none()
+                .fill(theme::bg_app())
+                .inner_margin(egui::Margin {
+                    left: 36.0,
+                    right: 36.0,
+                    top: 28.0,
+                    bottom: 24.0,
+                }),
+        )
+        .show(ctx, |ui| {
+            egui::ScrollArea::vertical().show(ui, |ui| match app.active_tab {
+                Tab::Home => crate::ui::home_tab::render(app, ctx, ui),
+                Tab::Music => crate::ui::music_tab::render(app, ctx, ui),
+                Tab::Video => crate::ui::video_tab::render(app, ctx, ui),
+                Tab::Converter => crate::ui::converter_tab::render(app, ctx, ui),
+                Tab::Queue => crate::ui::queue_tab::render(app, ctx, ui),
+                Tab::Folders => crate::ui::folders_tab::render(app, ctx, ui),
+                Tab::Gallery => crate::ui::gallery_tab::render(app, ctx, ui),
+                Tab::Cloud => crate::ui::cloud_tab::render(app, ctx, ui),
+                Tab::Stats => crate::ui::stats_tab::render(app, ctx, ui),
+                Tab::Achievements => crate::ui::achievements_tab::render(app, ctx, ui),
+                Tab::Settings => crate::ui::settings_tab::render(app, ctx, ui),
+                Tab::Help => crate::ui::help_tab::render(app, ctx, ui),
+            });
+        });
+
+    render_modal(app, ctx);
+    render_toasts(app, ctx);
+    render_inspector(app, ctx);
+    render_info_window(app, ctx);
+    render_qr_window(app, ctx);
+    render_command_palette(app, ctx);
+}
+
+/// Paleta de comandos (Ctrl+K) e caixa de ferramentas rápida.
+fn render_command_palette(app: &mut App, ctx: &egui::Context) {
+    if !app.cmd_palette_open {
+        return;
+    }
+    let pt = app.config.lang == crate::ui::i18n::Lang::Pt;
+    let mut chosen: Option<crate::ui::command::Cmd> = None;
+
+    egui::Window::new(if pt { "Paleta de comandos" } else { "Command palette" })
+        .anchor(egui::Align2::CENTER_TOP, egui::vec2(0.0, 90.0))
+        .fixed_size([460.0, 360.0])
+        .collapsible(false)
+        .show(ctx, |ui| {
+            let resp = ui.add(
+                egui::TextEdit::singleline(&mut app.cmd_query)
+                    .hint_text(if pt { "Buscar ação..." } else { "Search action..." })
+                    .desired_width(f32::INFINITY),
+            );
+            resp.request_focus();
+
+            let q = app.cmd_query.to_lowercase();
+            let cmds = crate::ui::command::all_commands(pt);
+            let filtered: Vec<_> = cmds
+                .into_iter()
+                .filter(|(label, _)| q.is_empty() || label.to_lowercase().contains(&q))
+                .collect();
+
+            if ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                if let Some((_, c)) = filtered.first() {
+                    chosen = Some(*c);
+                }
+            }
+
+            ui.add_space(6.0);
+            egui::ScrollArea::vertical().max_height(280.0).show(ui, |ui| {
+                for (label, cmd) in &filtered {
+                    if ui
+                        .add(
+                            egui::Button::new(egui::RichText::new(label).color(theme::text()))
+                                .fill(theme::bg_card())
+                                .min_size(egui::vec2(ui.available_width(), 30.0)),
+                        )
+                        .clicked()
+                    {
+                        chosen = Some(*cmd);
+                    }
+                }
+            });
+        });
+
+    if let Some(cmd) = chosen {
+        crate::ui::command::run(app, cmd);
+        app.cmd_palette_open = false;
+        app.cmd_query.clear();
+    }
+}
+
+/// Janela com o QR code do link de origem.
+fn render_qr_window(app: &mut App, ctx: &egui::Context) {
+    let Some((url, tex)) = app.qr_window.clone() else {
+        return;
+    };
+    let pt = app.config.lang == crate::ui::i18n::Lang::Pt;
+    let mut open = true;
+    egui::Window::new(if pt { "QR do link" } else { "Link QR code" })
+        .open(&mut open)
+        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .resizable(false)
+        .show(ctx, |ui| {
+            ui.vertical_centered(|ui| {
+                ui.add(
+                    egui::Image::from_texture((tex.id(), tex.size_vec2()))
+                        .fit_to_exact_size(egui::vec2(240.0, 240.0)),
+                );
+                ui.add_space(6.0);
+                ui.label(
+                    egui::RichText::new(crate::ui::music_tab::short_link(&url))
+                        .color(theme::text_muted())
+                        .size(11.0),
+                );
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui
+                        .add(theme::ghost_button(if pt { "📋 Copiar link" } else { "📋 Copy link" }))
+                        .clicked()
+                    {
+                        if let Ok(mut cb) = arboard::Clipboard::new() {
+                            let _ = cb.set_text(url.clone());
+                        }
+                    }
+                    if ui.add(theme::ghost_button(if pt { "Abrir" } else { "Open" })).clicked() {
+                        open::that(&url).ok();
+                    }
+                });
+            });
+        });
+    if !open {
+        app.qr_window = None;
+    }
+}
+
+/// Janela genérica de informação (ex.: metadados de um arquivo).
+fn render_info_window(app: &mut App, ctx: &egui::Context) {
+    let content = app.info_window.lock().unwrap().clone();
+    let Some((title, body)) = content else {
+        return;
+    };
+    let mut open = true;
+    egui::Window::new(title)
+        .open(&mut open)
+        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .default_size([520.0, 420.0])
+        .show(ctx, |ui| {
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                ui.add(
+                    egui::Label::new(
+                        egui::RichText::new(&body).color(theme::text()).monospace().size(12.0),
+                    )
+                    .wrap(true),
+                );
+            });
+        });
+    if !open {
+        *app.info_window.lock().unwrap() = None;
+    }
+}
+
+/// Janela do inspetor de formatos (resolução, codec, bitrate, tamanho).
+fn render_inspector(app: &mut App, ctx: &egui::Context) {
+    let (open, loading, rows, error) = {
+        let i = app.inspector.lock().unwrap();
+        if !i.open {
+            return;
+        }
+        (i.open, i.loading, i.rows.clone(), i.error.clone())
+    };
+    let mut keep_open = open;
+    let s = crate::ui::i18n::s(app.config.lang);
+    let pt = app.config.lang == crate::ui::i18n::Lang::Pt;
+
+    egui::Window::new(if pt { "Inspetor de formatos" } else { "Format inspector" })
+        .open(&mut keep_open)
+        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .default_size([640.0, 460.0])
+        .show(ctx, |ui| {
+            if loading {
+                ui.horizontal(|ui| {
+                    ui.add(egui::Spinner::new().color(theme::accent()));
+                    ui.label(egui::RichText::new(if pt { "Buscando formatos..." } else { "Fetching formats..." }).color(theme::text_muted()));
+                });
+                ctx.request_repaint();
+                return;
+            }
+            if let Some(e) = &error {
+                ui.label(egui::RichText::new(e).color(theme::danger()));
+                return;
+            }
+            ui.label(
+                egui::RichText::new(if pt {
+                    "Resoluções, codecs, bitrate e tamanho disponíveis."
+                } else {
+                    "Available resolutions, codecs, bitrate and size."
+                })
+                .color(theme::text_muted())
+                .size(12.0),
+            );
+            ui.add_space(6.0);
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                egui::Grid::new("fmt_grid")
+                    .striped(true)
+                    .num_columns(8)
+                    .spacing(egui::vec2(14.0, 6.0))
+                    .show(ui, |ui| {
+                        for h in ["ID", "Ext", if pt { "Tipo" } else { "Kind" }, if pt { "Resolução" } else { "Res" }, "FPS", "Codec", "Bitrate", if pt { "Tamanho" } else { "Size" }] {
+                            ui.label(egui::RichText::new(h).color(theme::accent()).strong().size(12.0));
+                        }
+                        ui.end_row();
+                        for r in &rows {
+                            let c = |t: &str| egui::RichText::new(t.to_string()).color(theme::text()).size(12.0);
+                            ui.label(c(&r.id));
+                            ui.label(c(&r.ext));
+                            ui.label(c(&r.kind));
+                            ui.label(c(&r.resolution));
+                            ui.label(c(&r.fps));
+                            ui.label(egui::RichText::new(&r.codec).color(theme::text_muted()).size(12.0));
+                            ui.label(c(&r.bitrate));
+                            ui.label(c(&r
+                                .size
+                                .map(crate::download::engine::format_size)
+                                .unwrap_or_else(|| "—".to_string())));
+                            ui.end_row();
+                        }
+                    });
+            });
+            let _ = s;
+        });
+
+    if !keep_open {
+        app.inspector.lock().unwrap().open = false;
+    }
+}
+
+/// Notificações in-app, empilhadas no canto inferior direito.
+fn render_toasts(app: &App, ctx: &egui::Context) {
+    if app.toasts.is_empty() {
+        return;
+    }
+    egui::Area::new("toasts".into())
+        .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-16.0, -16.0))
+        .interactable(false)
+        .show(ctx, |ui| {
+            ui.with_layout(egui::Layout::bottom_up(egui::Align::RIGHT), |ui| {
+                for t in app.toasts.iter().rev() {
+                    let accent = if t.error { theme::danger() } else { theme::accent() };
+                    egui::Frame::none()
+                        .fill(theme::bg_card())
+                        .rounding(egui::Rounding::same(8.0))
+                        .stroke(egui::Stroke::new(1.0, accent))
+                        .inner_margin(egui::Margin::symmetric(14.0, 10.0))
+                        .show(ui, |ui| {
+                            ui.set_max_width(360.0);
+                            ui.label(
+                                egui::RichText::new(&t.text)
+                                    .color(theme::text())
+                                    .size(13.0),
+                            );
+                        });
+                    ui.add_space(6.0);
+                }
+            });
+        });
+}
+
+fn render_sidebar(app: &mut App, ctx: &egui::Context) {
+    egui::SidePanel::left("sidebar")
+        .resizable(false)
+        .exact_width(228.0)
+        .frame(
+            egui::Frame::none()
+                .fill(theme::bg_sidebar())
+                .inner_margin(egui::Margin {
+                    left: 14.0,
+                    right: 14.0,
+                    top: 18.0,
+                    bottom: 24.0,
+                }),
+        )
+        .show(ctx, |ui| {
+            // Marca "Lumen" + selo DOWNLOADER
+            ui.horizontal(|ui| {
+                ui.label(
+                    egui::RichText::new("◆")
+                        .size(22.0)
+                        .color(theme::accent()),
+                );
+                ui.add_space(2.0);
+                ui.label(
+                    egui::RichText::new("Lumen")
+                        .size(22.0)
+                        .strong()
+                        .color(theme::text()),
+                );
+                ui.add_space(4.0);
+                let badge = egui::Frame::none()
+                    .fill(theme::accent_soft())
+                    .rounding(egui::Rounding::same(5.0))
+                    .inner_margin(egui::Margin::symmetric(7.0, 3.0));
+                badge.show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new("DOWNLOADER")
+                            .size(10.0)
+                            .strong()
+                            .color(theme::accent()),
+                    );
+                });
+                // Caixa de ferramentas rápida (abre a paleta de comandos / Ctrl+K).
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .add(
+                            egui::Button::new(egui::RichText::new("🧰").size(16.0))
+                                .fill(egui::Color32::TRANSPARENT),
+                        )
+                        .on_hover_text("Ctrl+K")
+                        .clicked()
+                    {
+                        app.cmd_palette_open = true;
+                        app.cmd_query.clear();
+                    }
+                });
+            });
+
+            ui.add_space(22.0);
+
+            let s = crate::ui::i18n::s(app.config.lang);
+            let nav = [
+                ("🏠", s.nav_home, Tab::Home),
+                ("🎵", s.nav_music, Tab::Music),
+                ("🎬", s.nav_video, Tab::Video),
+                ("🔄", s.nav_converter, Tab::Converter),
+                ("📋", s.nav_queue, Tab::Queue),
+                ("📁", s.nav_folders, Tab::Folders),
+                ("🖼", s.nav_gallery, Tab::Gallery),
+                ("☁", s.nav_cloud, Tab::Cloud),
+                ("📊", s.nav_stats, Tab::Stats),
+                ("🏆", s.nav_achievements, Tab::Achievements),
+                ("⚙", s.nav_settings, Tab::Settings),
+                ("❓", s.nav_help, Tab::Help),
+            ];
+            // Reserva espaço para o rodapé (armazenamento + crédito) com uma folga
+            // extra no fim, para não colar na borda/barra de tarefas.
+            let footer_h = 150.0;
+            let nav_h = (ui.available_height() - footer_h).max(120.0);
+            egui::ScrollArea::vertical()
+                .auto_shrink([false, false])
+                .max_height(nav_h)
+                .show(ui, |ui| {
+                    for (icon, label, tab) in nav {
+                        if theme::nav_item(ui, icon, label, app.active_tab == tab) {
+                            app.active_tab = tab;
+                        }
+                        ui.add_space(3.0);
+                    }
+                });
+
+            ui.add_space(6.0);
+            storage_footer(ui, app);
+            ui.add_space(6.0);
+            credit_footer(ui, app.config.lang == crate::ui::i18n::Lang::Pt);
+        });
+}
+
+/// Widget de armazenamento estilo biblioteca do Xbox: anel de % usado + "X GB livre".
+fn storage_footer(ui: &mut egui::Ui, app: &App) {
+    let pt = app.config.lang == crate::ui::i18n::Lang::Pt;
+    let (free, total) = disk_usage(&app.config.default_download_dir);
+
+    let frame = egui::Frame::none()
+        .fill(theme::bg_card())
+        .rounding(egui::Rounding::same(10.0))
+        .stroke(egui::Stroke::new(1.0, theme::border()))
+        .inner_margin(egui::Margin::symmetric(12.0, 10.0));
+    frame.show(ui, |ui| {
+        let (rect, _) =
+            ui.allocate_exact_size(egui::vec2(ui.available_width(), 34.0), egui::Sense::hover());
+        let cy = rect.center().y;
+
+        // Texto à esquerda.
+        ui.painter().text(
+            egui::pos2(rect.min.x, cy - 8.0),
+            egui::Align2::LEFT_CENTER,
+            if pt { "Armazenamento" } else { "All Storage" },
+            egui::FontId::proportional(13.0),
+            theme::text(),
+        );
+        let free_txt = format!(
+            "{} {}",
+            crate::download::engine::format_size(free),
+            if pt { "livres" } else { "free" }
+        );
+        ui.painter().text(
+            egui::pos2(rect.min.x, cy + 9.0),
+            egui::Align2::LEFT_CENTER,
+            free_txt,
+            egui::FontId::proportional(11.5),
+            theme::text_muted(),
+        );
+
+        // Anel de uso à direita.
+        let used_frac = if total > 0 {
+            ((total - free) as f32 / total as f32).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let center = egui::pos2(rect.max.x - 18.0, cy);
+        let radius = 15.0;
+        ui.painter()
+            .circle_stroke(center, radius, egui::Stroke::new(3.0, theme::bg_card_hover()));
+        draw_arc(ui.painter(), center, radius, used_frac, theme::accent(), 3.0);
+        ui.painter().text(
+            center,
+            egui::Align2::CENTER_CENTER,
+            format!("{:.0}%", used_frac * 100.0),
+            egui::FontId::proportional(10.0),
+            theme::text(),
+        );
+    });
+}
+
+/// Desenha um arco (fração 0..1) começando no topo, sentido horário.
+fn draw_arc(
+    painter: &egui::Painter,
+    center: egui::Pos2,
+    radius: f32,
+    frac: f32,
+    color: egui::Color32,
+    width: f32,
+) {
+    if frac <= 0.0 {
+        return;
+    }
+    let start = -std::f32::consts::FRAC_PI_2;
+    let sweep = frac * std::f32::consts::TAU;
+    let n = ((frac * 64.0).ceil() as usize).max(2);
+    let pts: Vec<egui::Pos2> = (0..=n)
+        .map(|i| {
+            let a = start + sweep * (i as f32 / n as f32);
+            egui::pos2(center.x + radius * a.cos(), center.y + radius * a.sin())
+        })
+        .collect();
+    painter.add(egui::Shape::line(pts, egui::Stroke::new(width, color)));
+}
+
+/// Espaço (livre, total) do disco da pasta (ou do ancestral existente mais próximo).
+fn disk_usage(folder: &std::path::Path) -> (i64, i64) {
+    let mut p = folder;
+    loop {
+        if p.exists() {
+            let free = fs2::available_space(p).unwrap_or(0) as i64;
+            let total = fs2::total_space(p).unwrap_or(0) as i64;
+            return (free, total);
+        }
+        match p.parent() {
+            Some(parent) => p = parent,
+            None => return (0, 0),
+        }
+    }
+}
+
+/// Rodapé de crédito clicável: "Lumen Connection" → site oficial.
+fn credit_footer(ui: &mut egui::Ui, pt: bool) {
+    const URL: &str = "https://lumenconnection.com.br/";
+
+    // Rótulo pequeno acima do cartão.
+    ui.label(
+        egui::RichText::new(if pt { "CRÉDITO · CONHEÇA-NOS" } else { "CREDIT · GET TO KNOW US" })
+            .size(9.0)
+            .strong()
+            .color(theme::text_faint()),
+    );
+    ui.add_space(3.0);
+
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(ui.available_width(), 50.0), egui::Sense::click());
+
+    let hovered = resp.hovered();
+    if hovered {
+        ui.painter()
+            .rect_filled(rect, egui::Rounding::same(10.0), theme::bg_card_hover());
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+
+    // "Avatar" circular com o losango da marca.
+    let cx = rect.min.x + 18.0;
+    let cy = rect.center().y;
+    ui.painter().circle_filled(egui::pos2(cx, cy), 13.0, theme::accent());
+    ui.painter().text(
+        egui::pos2(cx, cy),
+        egui::Align2::CENTER_CENTER,
+        "◆",
+        egui::FontId::proportional(13.0),
+        egui::Color32::WHITE,
+    );
+
+    ui.painter().text(
+        egui::pos2(rect.min.x + 40.0, cy - 8.0),
+        egui::Align2::LEFT_CENTER,
+        "Lumen Connection",
+        egui::FontId::proportional(14.0),
+        theme::text(),
+    );
+    // Convite com seta de link externo (acende no hover).
+    let link_color = if hovered { theme::accent() } else { theme::text_muted() };
+    ui.painter().text(
+        egui::pos2(rect.min.x + 40.0, cy + 9.0),
+        egui::Align2::LEFT_CENTER,
+        if pt { "Conheça-nos  ↗" } else { "Get to know us  ↗" },
+        egui::FontId::proportional(11.0),
+        link_color,
+    );
+
+    if resp.clicked() {
+        open::that(URL).ok();
+    }
+    resp.on_hover_text(format!("{}\n{}", URL, if pt { "Abrir site" } else { "Open site" }));
+}
+
+fn open_folder(path: &str) {
+    if let Some(parent) = std::path::Path::new(path).parent() {
+        open::that(parent).ok();
+    }
+}
+
+/// Mostra miniatura, canal, duração, resoluções, tamanho estimado e espaço livre.
+fn render_preview(
+    ui: &mut egui::Ui,
+    s: &crate::ui::i18n::Strings,
+    preview: &Option<crate::download::engine::VideoPreview>,
+    media_type: MediaType,
+    folder: &std::path::Path,
+    thumb: Option<&egui::TextureHandle>,
+) {
+    let Some(pv) = preview else {
+        return;
+    };
+    ui.add_space(4.0);
+    if let Some(tex) = thumb {
+        let [tw, th] = tex.size();
+        let w = 200.0_f32;
+        let h = w * th as f32 / tw.max(1) as f32;
+        ui.add(egui::Image::from_texture((tex.id(), egui::vec2(w, h))));
+        ui.add_space(4.0);
+    }
+    ui.horizontal(|ui| {
+        if !pv.channel.is_empty() {
+            ui.label(
+                egui::RichText::new(format!("👤 {}", pv.channel))
+                    .color(theme::text_muted())
+                    .size(12.0),
+            );
+        }
+        if !pv.duration.is_empty() {
+            ui.label(
+                egui::RichText::new(format!("⏱ {}", pv.duration))
+                    .color(theme::text_muted())
+                    .size(12.0),
+            );
+        }
+    });
+    if media_type == MediaType::Video && !pv.resolutions.is_empty() {
+        let tops: Vec<String> = pv.resolutions.iter().take(5).map(|h| format!("{}p", h)).collect();
+        ui.label(
+            egui::RichText::new(format!("{} {}", s.prev_resolutions, tops.join(" · ")))
+                .color(theme::text_faint())
+                .size(12.0),
+        );
+    }
+    let est = if media_type == MediaType::Music {
+        pv.est_size_audio
+    } else {
+        pv.est_size_video
+    };
+    ui.horizontal(|ui| {
+        if let Some(sz) = est {
+            ui.label(
+                egui::RichText::new(format!(
+                    "{} {}",
+                    s.prev_est_size,
+                    crate::download::engine::format_size(sz)
+                ))
+                .color(theme::text_muted())
+                .size(12.0),
+            );
+        }
+        if let Some(free) = free_space(folder) {
+            ui.label(
+                egui::RichText::new(format!(
+                    "• {} {}",
+                    s.prev_free,
+                    crate::download::engine::format_size(free)
+                ))
+                .color(theme::text_faint())
+                .size(12.0),
+            );
+            // Aviso de pouco espaço (estimativa > livre, ou < 200 MB).
+            let low = est.map(|e| free < e).unwrap_or(false) || free < 200 * 1024 * 1024;
+            if low {
+                ui.label(
+                    egui::RichText::new(s.low_space)
+                        .color(theme::danger())
+                        .size(12.0),
+                );
+            }
+        }
+    });
+}
+
+/// Espaço livre no disco da pasta (ou do ancestral existente mais próximo).
+fn free_space(folder: &std::path::Path) -> Option<i64> {
+    let mut p = folder;
+    loop {
+        if p.exists() {
+            return fs2::available_space(p).ok().map(|b| b as i64);
+        }
+        match p.parent() {
+            Some(parent) => p = parent,
+            None => return None,
+        }
+    }
+}
+
+fn render_modal(app: &mut App, ctx: &egui::Context) {
+    let phase;
+    let url;
+    let title;
+    let file_name;
+    let folder_path;
+    let create_subfolder;
+    let subfolder_name;
+    let media_type;
+    let output_format;
+    let quality;
+    let source_file;
+    let progress;
+    let preview;
+    let clip_enabled;
+    let clip_start;
+    let clip_end;
+    let max_height;
+    let convert_preset;
+    let live_from_start;
+
+    {
+        let op = app.operation.lock().unwrap();
+        phase = op.phase.clone();
+        progress = op.progress;
+        preview = op.preview.clone();
+        url = op.url.clone();
+        title = op.title.clone();
+        file_name = op.file_name.clone();
+        folder_path = op.folder_path.clone();
+        create_subfolder = op.create_subfolder;
+        subfolder_name = op.subfolder_name.clone();
+        media_type = op.media_type;
+        source_file = op.source_file.clone();
+        output_format = op.output_format.clone();
+        quality = op.quality.clone();
+        clip_enabled = op.clip_enabled;
+        clip_start = op.clip_start.clone();
+        clip_end = op.clip_end.clone();
+        max_height = op.max_height;
+        convert_preset = op.convert_preset.clone();
+        live_from_start = op.live_from_start;
+    }
+
+    let s = crate::ui::i18n::s(app.config.lang);
+
+    match &phase {
+        DownloadPhase::Idle => {}
+
+        DownloadPhase::Fetching => {
+            let mut cancel = false;
+            egui::Window::new("Processando")
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .resizable(false)
+                .fixed_size([400.0, 150.0])
+                .show(ctx, |ui: &mut egui::Ui| {
+                    ui.vertical_centered(|ui: &mut egui::Ui| {
+                        ui.label(s.dl_searching);
+                        ui.add(egui::Spinner::new());
+                        ui.add_space(12.0);
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new(s.btn_cancel).color(theme::text()),
+                                )
+                                .fill(theme::bg_card()),
+                            )
+                            .clicked()
+                        {
+                            cancel = true;
+                        }
+                    });
+                });
+            if cancel {
+                app.cancel_operation();
+            }
+            ctx.request_repaint();
+        }
+
+        DownloadPhase::Configuring => {
+            let mut new_file_name = file_name.clone();
+            let mut new_folder_path = folder_path.clone();
+            let mut new_create_subfolder = create_subfolder;
+            let mut new_subfolder_name = subfolder_name.clone();
+            let mut new_format = output_format.clone();
+            let mut new_quality = quality.clone();
+            let mut new_clip_enabled = clip_enabled;
+            let mut new_clip_start = clip_start.clone();
+            let mut new_clip_end = clip_end.clone();
+            let mut new_max_height = max_height;
+            let mut new_convert_preset = convert_preset.clone();
+            let mut new_live_from_start = live_from_start;
+
+            let is_convert = media_type == MediaType::Convert;
+            let formats: Vec<&str> = match media_type {
+                MediaType::Music => vec!["mp3", "m4a", "opus", "flac"],
+                MediaType::Video => vec!["mp4", "mkv", "webm"],
+                // Para conversão, os formatos dependem do tipo do arquivo de origem
+                // (imagem → formatos de imagem, vídeo → vídeo/áudio, etc.).
+                MediaType::Convert => {
+                    crate::download::engine::output_formats(
+                        crate::download::engine::categorize(&source_file),
+                    )
+                }
+            };
+            let qualities = vec!["best", "medium", "high"];
+            let window_title = if is_convert { s.cfg_convert } else { s.cfg_download };
+
+            // Garante (uma vez) a textura da miniatura para esta pré-visualização.
+            if let Some(pv) = &preview {
+                match &pv.thumbnail {
+                    Some(thumb) if app.thumb_key.as_deref() != Some(pv.title.as_str()) => {
+                        let color = egui::ColorImage::from_rgba_unmultiplied(
+                            [thumb.width, thumb.height],
+                            &thumb.rgba,
+                        );
+                        app.thumb_texture = Some(ctx.load_texture(
+                            "preview_thumb",
+                            color,
+                            egui::TextureOptions::LINEAR,
+                        ));
+                        app.thumb_key = Some(pv.title.clone());
+                    }
+                    None => {
+                        app.thumb_texture = None;
+                        app.thumb_key = None;
+                    }
+                    _ => {}
+                }
+            }
+            let thumb_tex = app.thumb_texture.clone();
+
+            let mut win_height =
+                if preview.as_ref().and_then(|p| p.thumbnail.as_ref()).is_some() {
+                    580.0
+                } else {
+                    480.0
+                };
+            if new_clip_enabled {
+                win_height += 40.0;
+            }
+            egui::Window::new(window_title)
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .resizable(false)
+                .fixed_size([500.0, win_height])
+                .show(ctx, |ui| {
+                    ui.label(
+                        egui::RichText::new(window_title).size(18.0).color(theme::accent()),
+                    );
+                    ui.separator();
+                    ui.add_space(6.0);
+
+                    if is_convert {
+                        ui.label(s.f_source);
+                        ui.label(
+                            egui::RichText::new(source_file.to_string_lossy())
+                                .color(theme::text_muted()),
+                        );
+                    } else {
+                        ui.label(s.f_title);
+                        ui.label(&title);
+                        render_preview(
+                            ui,
+                            s,
+                            &preview,
+                            media_type,
+                            &new_folder_path,
+                            thumb_tex.as_ref(),
+                        );
+                    }
+
+                    // Aviso de duplicado (já baixado antes).
+                    if !is_convert && app.db.url_exists(&url) {
+                        ui.label(
+                            egui::RichText::new(s.dup_warning)
+                                .color(theme::danger())
+                                .size(12.0),
+                        );
+                    }
+                    ui.add_space(6.0);
+
+                    ui.label(s.f_filename);
+                    ui.text_edit_singleline(&mut new_file_name);
+                    ui.add_space(6.0);
+
+                    ui.label(s.f_folder);
+                    ui.horizontal(|ui| {
+                        let path_str = new_folder_path.to_string_lossy().to_string();
+                        let mut path_edit = path_str;
+                        ui.add(
+                            egui::TextEdit::singleline(&mut path_edit)
+                                .text_color(theme::text_muted()),
+                        );
+                        new_folder_path = std::path::PathBuf::from(&path_edit);
+                        if ui
+                            .add(
+                                egui::Button::new(egui::RichText::new("📁").color(Color32::WHITE))
+                                    .fill(theme::accent()),
+                            )
+                            .clicked()
+                        {
+                            if let Some(picked) = rfd::FileDialog::new().pick_folder() {
+                                new_folder_path = picked;
+                            }
+                        }
+                    });
+                    ui.add_space(6.0);
+
+                    ui.checkbox(&mut new_create_subfolder, s.f_subfolder);
+                    if new_create_subfolder {
+                        ui.horizontal(|ui| {
+                            ui.label(s.f_name);
+                            ui.text_edit_singleline(&mut new_subfolder_name);
+                        });
+                    }
+                    ui.add_space(6.0);
+
+                    ui.label(if is_convert { s.f_format_to } else { s.f_format });
+                    ui.horizontal_wrapped(|ui| {
+                        for fmt in &formats {
+                            let is_selected = new_format == *fmt;
+                            if ui
+                                .add(
+                                    egui::Button::new(*fmt).fill(if is_selected {
+                                        theme::accent()
+                                    } else {
+                                        theme::bg_card()
+                                    }),
+                                )
+                                .clicked()
+                            {
+                                new_format = fmt.to_string();
+                            }
+                        }
+                    });
+                    // Mantém a extensão do nome do arquivo igual ao formato escolhido.
+                    {
+                        let stem = std::path::Path::new(&new_file_name)
+                            .file_stem()
+                            .map(|s| s.to_string_lossy().to_string())
+                            .unwrap_or_else(|| new_file_name.clone());
+                        new_file_name = format!("{}.{}", stem, new_format);
+                    }
+                    ui.add_space(6.0);
+
+                    // Preset de conversão (vídeo de origem → vídeo).
+                    if is_convert
+                        && crate::download::engine::categorize(&source_file)
+                            == crate::download::engine::FileCategory::Video
+                        && matches!(new_format.as_str(), "mp4" | "mkv" | "webm" | "avi" | "mov")
+                    {
+                        let is_manual = new_convert_preset.starts_with("manual:");
+                        ui.label(s.conv_preset);
+                        ui.horizontal_wrapped(|ui| {
+                            let presets = [
+                                ("", s.preset_original),
+                                ("compress", s.preset_compress),
+                                ("720", "720p"),
+                                ("480", "480p"),
+                                ("manual:::", s.preset_manual),
+                            ];
+                            for (val, label) in presets {
+                                let sel = if val.starts_with("manual") {
+                                    is_manual
+                                } else {
+                                    new_convert_preset == val
+                                };
+                                if ui
+                                    .add(egui::Button::new(label).fill(if sel {
+                                        theme::accent()
+                                    } else {
+                                        theme::bg_card()
+                                    }))
+                                    .clicked()
+                                    && !sel
+                                {
+                                    new_convert_preset = val.to_string();
+                                }
+                            }
+                        });
+                        // Campos do ajuste manual.
+                        if new_convert_preset.starts_with("manual:") {
+                            let parts: Vec<String> = new_convert_preset
+                                .splitn(5, ':')
+                                .map(|s| s.to_string())
+                                .collect();
+                            let mut h = parts.get(1).cloned().unwrap_or_default();
+                            let mut fps = parts.get(2).cloned().unwrap_or_default();
+                            let mut vb = parts.get(3).cloned().unwrap_or_default();
+                            let mut ab = parts.get(4).cloned().unwrap_or_default();
+                            ui.add_space(4.0);
+                            egui::Grid::new("manual_grid").num_columns(2).spacing([8.0, 4.0]).show(ui, |ui| {
+                                ui.label(s.manual_height);
+                                ui.add(egui::TextEdit::singleline(&mut h).desired_width(90.0).hint_text("720"));
+                                ui.end_row();
+                                ui.label(s.manual_fps);
+                                ui.add(egui::TextEdit::singleline(&mut fps).desired_width(90.0).hint_text("30"));
+                                ui.end_row();
+                                ui.label(s.manual_vbitrate);
+                                ui.add(egui::TextEdit::singleline(&mut vb).desired_width(90.0).hint_text("2000k"));
+                                ui.end_row();
+                                ui.label(s.manual_abitrate);
+                                ui.add(egui::TextEdit::singleline(&mut ab).desired_width(90.0).hint_text("160k"));
+                                ui.end_row();
+                            });
+                            new_convert_preset = format!("manual:{}:{}:{}:{}", h.trim(), fps.trim(), vb.trim(), ab.trim());
+                        }
+                        ui.add_space(6.0);
+                    }
+
+                    if !is_convert {
+                        ui.label(s.f_quality);
+                        ui.horizontal(|ui| {
+                            for q in &qualities {
+                                let is_selected = new_quality == *q;
+                                if ui
+                                    .add(
+                                        egui::Button::new(*q).fill(if is_selected {
+                                            theme::accent()
+                                        } else {
+                                            theme::bg_card()
+                                        }),
+                                    )
+                                    .clicked()
+                                {
+                                    new_quality = q.to_string();
+                                }
+                            }
+                        });
+                        ui.add_space(6.0);
+
+                        // Resolução máxima (apenas vídeo, quando há resoluções conhecidas).
+                        if media_type == MediaType::Video {
+                            if let Some(pv) = &preview {
+                                if !pv.resolutions.is_empty() {
+                                    ui.label(s.f_resolution);
+                                    ui.horizontal_wrapped(|ui| {
+                                        let best_selected = new_max_height.is_none();
+                                        if ui
+                                            .add(egui::Button::new(s.res_best).fill(
+                                                if best_selected {
+                                                    theme::accent()
+                                                } else {
+                                                    theme::bg_card()
+                                                },
+                                            ))
+                                            .clicked()
+                                        {
+                                            new_max_height = None;
+                                        }
+                                        for h in pv.resolutions.iter().take(6) {
+                                            let sel = new_max_height == Some(*h);
+                                            if ui
+                                                .add(egui::Button::new(format!("{}p", h)).fill(
+                                                    if sel {
+                                                        theme::accent()
+                                                    } else {
+                                                        theme::bg_card()
+                                                    },
+                                                ))
+                                                .clicked()
+                                            {
+                                                new_max_height = Some(*h);
+                                            }
+                                        }
+                                    });
+                                    ui.add_space(6.0);
+                                }
+                            }
+                        }
+
+                        // Recorte por tempo (trim).
+                        ui.checkbox(&mut new_clip_enabled, s.clip_label);
+                        if new_clip_enabled {
+                            ui.horizontal(|ui| {
+                                ui.label(s.clip_from);
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut new_clip_start)
+                                        .desired_width(70.0)
+                                        .hint_text("0:00"),
+                                );
+                                ui.label(s.clip_to);
+                                ui.add(
+                                    egui::TextEdit::singleline(&mut new_clip_end)
+                                        .desired_width(70.0)
+                                        .hint_text("1:30"),
+                                );
+                            });
+                        }
+
+                        // Gravar live do início (apenas vídeo).
+                        if media_type == MediaType::Video {
+                            ui.checkbox(&mut new_live_from_start, s.live_label);
+                        }
+                    }
+                    ui.add_space(12.0);
+
+                    ui.horizontal(|ui| {
+                    if ui
+                        .add(
+                            egui::Button::new(egui::RichText::new(s.btn_cancel).color(theme::text()))
+                                .fill(theme::bg_card()),
+                        )
+                        .clicked()
+                    {
+                        let mut op = app.operation.lock().unwrap();
+                        op.phase = DownloadPhase::Idle;
+                    }
+                    let confirm_label = if is_convert { s.btn_convert } else { s.btn_confirm };
+                    if ui
+                        .add(
+                            egui::Button::new(egui::RichText::new(confirm_label).color(Color32::WHITE))
+                                .fill(theme::accent())
+                                .min_size(egui::vec2(200.0, 36.0)),
+                        )
+                        .clicked()
+                        {
+                            let mut target_folder = new_folder_path.clone();
+                            if new_create_subfolder && !new_subfolder_name.is_empty() {
+                                target_folder = target_folder.join(&new_subfolder_name);
+                                std::fs::create_dir_all(&target_folder).ok();
+                                app.db.add_folder(
+                                    &new_subfolder_name,
+                                    &target_folder.to_string_lossy(),
+                                );
+                            }
+
+                            // Organização automática (tipo/data/canal).
+                            let media_str = match media_type {
+                                MediaType::Music => "music",
+                                MediaType::Video => "video",
+                                MediaType::Convert => "convert",
+                            };
+                            let channel = preview
+                                .as_ref()
+                                .map(|p| p.channel.clone())
+                                .unwrap_or_default();
+                            if let Some(sub) = crate::download::engine::organize_subfolder(
+                                &app.config.organize_by,
+                                media_str,
+                                &channel,
+                            ) {
+                                target_folder = target_folder.join(sub);
+                                std::fs::create_dir_all(&target_folder).ok();
+                            }
+
+                            let safe_name = crate::download::engine::sanitize_filename(&new_file_name);
+                            let output_path = target_folder.join(&safe_name);
+                            let captured_url = url.clone();
+                            let captured_path = output_path.to_string_lossy().to_string();
+                            let captured_format = new_format.clone();
+                            let captured_quality = new_quality.clone();
+                            let captured_folder = target_folder.to_string_lossy().to_string();
+                            let captured_title = title.clone();
+                            let captured_media_type = media_type;
+                            let captured_source = source_file.to_string_lossy().to_string();
+                            let captured_subs = if app.config.subtitles
+                                && media_type == MediaType::Video
+                            {
+                                Some(app.config.sub_langs.clone())
+                            } else {
+                                None
+                            };
+                            let captured_clip = if new_clip_enabled
+                                && (!new_clip_start.trim().is_empty()
+                                    || !new_clip_end.trim().is_empty())
+                            {
+                                Some((new_clip_start.clone(), new_clip_end.clone()))
+                            } else {
+                                None
+                            };
+                            let captured_notify = app.config.notify_on_complete;
+                            let captured_cloud = if app.config.copy_to_cloud
+                                && !app.config.cloud_folder.trim().is_empty()
+                            {
+                                Some(app.config.cloud_folder.clone())
+                            } else {
+                                None
+                            };
+                            let captured_max_height = new_max_height;
+                            let captured_preset = new_convert_preset.clone();
+                            let captured_live = new_live_from_start;
+                            let captured_rate = if app.config.rate_limit.trim().is_empty() {
+                                None
+                            } else {
+                                Some(app.config.rate_limit.clone())
+                            };
+                            let captured_fragments = app.config.concurrent_fragments;
+                            let engine = app.engine.clone();
+                            let op_state = app.operation.clone();
+                            let db = crate::db::database::Database::open(&app.config.db_path());
+
+                            {
+                                let mut op = app.operation.lock().unwrap();
+                                op.phase = DownloadPhase::Downloading(
+                                    if is_convert {
+                                        "Convertendo arquivo...".to_string()
+                                    } else {
+                                        "Iniciando download...".to_string()
+                                    },
+                                );
+                                op.file_name = new_file_name.clone();
+                                op.folder_path = new_folder_path.clone();
+                                op.create_subfolder = new_create_subfolder;
+                                op.subfolder_name = new_subfolder_name.clone();
+                                op.output_format = new_format.clone();
+                                op.quality = new_quality.clone();
+                                op.progress = None;
+                            }
+
+                            let progress_state = app.operation.clone();
+                            app.download_task = Some(tokio::spawn(async move {
+                                match engine {
+                                    Some(eng) => {
+                                        let result = if captured_media_type == MediaType::Convert {
+                                            eng.convert_file(
+                                                &captured_source,
+                                                &captured_path,
+                                                &captured_format,
+                                                &captured_preset,
+                                            )
+                                            .await
+                                        } else {
+                                            let on_progress = move |p: f64| {
+                                                if let Ok(mut s) = progress_state.lock() {
+                                                    s.progress = Some(p.clamp(0.0, 1.0) as f32);
+                                                }
+                                            };
+                                            let opts = crate::download::engine::DownloadOptions {
+                                                is_audio: captured_media_type == MediaType::Music,
+                                                format: captured_format.clone(),
+                                                quality: captured_quality.clone(),
+                                                max_height: captured_max_height,
+                                                subtitle_langs: captured_subs,
+                                                clip: captured_clip,
+                                                rate_limit: captured_rate,
+                                                concurrent_fragments: captured_fragments,
+                                                live_from_start: captured_live,
+                                            };
+                                            eng.fetch_and_download(
+                                                &captured_url,
+                                                &captured_path,
+                                                opts,
+                                                on_progress,
+                                            )
+                                            .await
+                                        };
+                                        match result
+                                        {
+                                            Ok(p) => {
+                                                let file_size = std::fs::metadata(&p)
+                                                    .ok()
+                                                    .map(|m| m.len() as i64);
+                                                // Cópia automática para a pasta de nuvem.
+                                                if let Some(cloud) = &captured_cloud {
+                                                    if let Some(name) = p.file_name() {
+                                                        let dest =
+                                                            std::path::Path::new(cloud).join(name);
+                                                        std::fs::create_dir_all(cloud).ok();
+                                                        std::fs::copy(&p, &dest).ok();
+                                                    }
+                                                }
+                                                db.add_history(
+                                                    &captured_url,
+                                                    &captured_title,
+                                                    match captured_media_type {
+                                                        MediaType::Music => "music",
+                                                        MediaType::Video => "video",
+                                                        MediaType::Convert => "convert",
+                                                    },
+                                                    &captured_format,
+                                                    &captured_quality,
+                                                    &captured_folder,
+                                                    &p.to_string_lossy(),
+                                                    file_size,
+                                                );
+                                                if captured_notify {
+                                                    crate::notify::send(
+                                                        "Download concluído",
+                                                        &captured_title,
+                                                    );
+                                                }
+                                                let mut s = op_state.lock().unwrap();
+                                                s.phase = DownloadPhase::Completed(
+                                                    p.to_string_lossy().to_string(),
+                                                );
+                                            }
+                                            Err(e) => {
+                                                let mut s = op_state.lock().unwrap();
+                                                s.phase =
+                                                    DownloadPhase::Failed(e.to_string());
+                                            }
+                                        }
+                                    }
+                                    None => {
+                                        let mut s = op_state.lock().unwrap();
+                                        s.phase =
+                                            DownloadPhase::Failed("Engine não inicializado".to_string());
+                                    }
+                                }
+                            }));
+                        }
+                    });
+                });
+
+            // Persiste as edições do modal de volta no estado a cada frame.
+            // Sem isso, formato/qualidade/nome/pasta só viveriam no frame atual
+            // e a seleção "voltaria" sozinha, parecendo que os botões não clicam.
+            {
+                let mut op = app.operation.lock().unwrap();
+                if op.phase == DownloadPhase::Configuring {
+                    op.file_name = new_file_name;
+                    op.folder_path = new_folder_path;
+                    op.create_subfolder = new_create_subfolder;
+                    op.subfolder_name = new_subfolder_name;
+                    op.output_format = new_format;
+                    op.quality = new_quality;
+                    op.clip_enabled = new_clip_enabled;
+                    op.clip_start = new_clip_start;
+                    op.clip_end = new_clip_end;
+                    op.max_height = new_max_height;
+                    op.convert_preset = new_convert_preset;
+                    op.live_from_start = new_live_from_start;
+                }
+            }
+        }
+
+        DownloadPhase::Downloading(msg) => {
+            let mut cancel = false;
+            egui::Window::new("Baixando")
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .resizable(false)
+                .fixed_size([400.0, 150.0])
+                .show(ctx, |ui: &mut egui::Ui| {
+                    ui.vertical_centered(|ui: &mut egui::Ui| {
+                        ui.label(msg.as_str());
+                        match progress {
+                            Some(p) => {
+                                ui.add(
+                                    egui::ProgressBar::new(p)
+                                        .fill(theme::accent())
+                                        .show_percentage(),
+                                );
+                            }
+                            None => {
+                                // Progresso indeterminado (áudio/conversão): barra animada.
+                                ui.add(
+                                    egui::ProgressBar::new(0.0)
+                                        .fill(theme::accent())
+                                        .animate(true)
+                                        .text(s.dl_processing),
+                                );
+                            }
+                        }
+                        ui.add_space(12.0);
+                        if ui
+                            .add(
+                                egui::Button::new(
+                                    egui::RichText::new(s.btn_cancel_dl).color(theme::text()),
+                                )
+                                .fill(theme::bg_card()),
+                            )
+                            .clicked()
+                        {
+                            cancel = true;
+                        }
+                    });
+                });
+            if cancel {
+                app.cancel_operation();
+            }
+            ctx.request_repaint();
+        }
+
+        DownloadPhase::Completed(path) => {
+            egui::Window::new("Download Concluído")
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .resizable(false)
+                .fixed_size([400.0, 140.0])
+                .show(ctx, |ui: &mut egui::Ui| {
+                    ui.vertical_centered(|ui: &mut egui::Ui| {
+                        ui.label(
+                            egui::RichText::new(s.dl_completed)
+                                .color(theme::accent())
+                                .size(16.0),
+                        );
+                        ui.add_space(8.0);
+                        ui.label(format!("{} {}", s.dl_saved, path));
+                        ui.add_space(12.0);
+                        ui.horizontal(|ui: &mut egui::Ui| {
+                            if ui
+                                .add(
+                                    egui::Button::new(egui::RichText::new(s.btn_open_folder).color(Color32::WHITE))
+                                        .fill(theme::accent()),
+                                )
+                                .clicked()
+                            {
+                                open_folder(&path);
+                            }
+                            if ui
+                                .add(
+                                    egui::Button::new(egui::RichText::new(s.btn_close).color(theme::text()))
+                                        .fill(theme::bg_card()),
+                                )
+                                .clicked()
+                            {
+                                let mut op = app.operation.lock().unwrap();
+                                op.phase = DownloadPhase::Idle;
+                            }
+                        });
+                    });
+                });
+        }
+
+        DownloadPhase::Failed(msg) => {
+            egui::Window::new("Erro")
+                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                .resizable(false)
+                .fixed_size([400.0, 130.0])
+                .show(ctx, |ui: &mut egui::Ui| {
+                    ui.vertical_centered(|ui: &mut egui::Ui| {
+                        ui.label(
+                            egui::RichText::new(s.dl_error)
+                                .color(theme::danger())
+                                .size(16.0),
+                        );
+                        ui.add_space(6.0);
+                        ui.label(msg.as_str());
+                        ui.add_space(12.0);
+                        if ui
+                            .add(
+                                egui::Button::new(egui::RichText::new(s.btn_close).color(Color32::WHITE))
+                                    .fill(theme::accent()),
+                            )
+                            .clicked()
+                        {
+                            let mut op = app.operation.lock().unwrap();
+                            op.phase = DownloadPhase::Idle;
+                        }
+                    });
+                });
+        }
+    }
+}

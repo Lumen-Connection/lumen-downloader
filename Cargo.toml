@@ -1,0 +1,31 @@
+[package]
+name = "lumen-downloader"
+version = "0.1.0"
+edition = "2021"
+
+[patch.crates-io]
+lofty = { git = "https://github.com/boul2gom/lofty-rs", rev = "f8eef9d98b6fabe8514052375d16eb66e696fd88" }
+
+[dependencies]
+eframe = "0.27"
+egui = "0.27"
+yt-dlp = "2.7.2"
+rusqlite = { version = "0.31", features = ["bundled"] }
+rfd = "0.14"
+open = "5"
+chrono = { version = "0.4", features = ["serde"] }
+tokio = { version = "1", features = ["full"] }
+dirs = "5"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+fs2 = "0.4"
+arboard = "3"
+notify-rust = "4"
+image = "0.25"
+pdfium-render = "0.8"
+printpdf = "0.7"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+flate2 = "1"
+tar = "0.4"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+qrcode = { version = "0.14", default-features = false }
