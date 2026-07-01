@@ -1,0 +1,32 @@
+NOTICE
+
+This project makes use of the following open-source crates declared in `Cargo.toml`, plus the patched `lofty` source used through `[patch.crates-io]`. The information below is a summary of upstream license metadata.
+
+eframe Author: Emil Ernerfeldt and contributors Source: https://github.com/emilk/egui/tree/master/crates/eframe License: MIT OR Apache-2.0
+egui Author: Emil Ernerfeldt and contributors Source: https://github.com/emilk/egui License: MIT OR Apache-2.0
+yt-dlp Author: boul2gom and contributors Source: https://github.com/boul2gom/yt-dlp License: GPL-3.0-only
+rusqlite Author: The rusqlite developers Source: https://github.com/rusqlite/rusqlite License: MIT
+rfd Author: Poly and contributors Source: https://github.com/PolyMeilex/rfd License: MIT
+open Author: Sebastian Thiel and contributors Source: https://github.com/Byron/open-rs License: MIT
+chrono Author: Chronotope and contributors Source: https://github.com/chronotope/chrono License: MIT OR Apache-2.0
+tokio Author: Tokio Contributors Source: https://github.com/tokio-rs/tokio License: MIT
+dirs Author: Simon Ochsenreither and contributors Source: https://github.com/soc/dirs-rs License: MIT OR Apache-2.0
+serde Author: Erick Tryzelaar, David Tolnay, and contributors Source: https://github.com/serde-rs/serde License: MIT OR Apache-2.0
+serde_json Author: Erick Tryzelaar, David Tolnay, and contributors Source: https://github.com/serde-rs/json License: MIT OR Apache-2.0
+fs2 Author: Dan Burkert and contributors Source: https://github.com/danburkert/fs2-rs License: MIT/Apache-2.0
+arboard Author: arboard contributors Source: https://github.com/1Password/arboard License: MIT OR Apache-2.0
+notify-rust Author: Hendrik Sollich and contributors Source: https://github.com/hoodie/notify-rust License: MIT OR Apache-2.0
+image Author: image-rs Developers Source: https://github.com/image-rs/image License: MIT OR Apache-2.0
+pdfium-render Author: Alastair Carey and contributors Source: https://github.com/ajrcarey/pdfium-render License: MIT OR Apache-2.0
+printpdf Author: Felix Schutt and contributors Source: https://github.com/fschutt/printpdf License: MIT
+reqwest Author: Sean McArthur and contributors Source: https://github.com/seanmonstar/reqwest License: MIT OR Apache-2.0
+flate2 Author: Alex Crichton and contributors Source: https://github.com/rust-lang/flate2-rs License: MIT OR Apache-2.0
+tar Author: Alex Crichton and contributors Source: https://github.com/composefs/tar-rs License: MIT OR Apache-2.0
+zip Author: zip-rs contributors Source: https://github.com/zip-rs/zip2.git License: MIT
+qrcode Author: KennyTM and contributors Source: https://github.com/kennytm/qrcode-rust License: MIT OR Apache-2.0
+lofty Author: Serial and contributors Source: https://github.com/Serial-ATA/lofty-rs (patched from rev f8eef9d98b6fabe8514052375d16eb66e696fd88) License: MIT OR Apache-2.0
+
+Where a crate is dual-licensed MIT OR Apache-2.0, you may choose either license. Full texts of the commonly used licenses can be found at:
+MIT: https://opensource.org/licenses/MIT
+Apache-2.0: https://www.apache.org/licenses/LICENSE-2.0
+GPL-3.0-only: https://www.gnu.org/licenses/gpl-3.0.en.html
