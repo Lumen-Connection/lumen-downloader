@@ -1,0 +1,196 @@
+use std::path::Path;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+
+use super::text_utils::sanitize_filename;
+
+#[derive(Clone, Copy, Default)]
+pub struct Progress {
+    pub fraction: f64,
+    pub speed_bps: f64,
+    pub eta_secs: u64,
+    pub downloaded_bytes: u64,
+}
+
+#[derive(Default)]
+pub struct NetStats {
+    pub current: f32,
+    pub history: Vec<f32>,
+}
+
+#[derive(Clone)]
+pub struct DownloadOptions {
+    pub is_audio: bool,
+    pub format: String,
+    pub quality: String,
+    pub max_height: Option<u32>,
+    pub subtitle_langs: Option<String>,
+    pub clip: Option<(String, String)>,
+    pub rate_limit: Option<String>,
+    pub concurrent_fragments: u32,
+    pub live_from_start: bool,
+    /// Gravação de live: usa contêiner MPEG-TS (robusto a interrupção) para o
+    /// arquivo sobreviver a uma parada forçada e poder ser remuxado.
+    pub is_live: bool,
+    /// Sinaliza uma parada graciosa de gravação de live (finaliza o que já baixou).
+    pub stop: Option<Arc<AtomicBool>>,
+}
+
+impl Default for DownloadOptions {
+    fn default() -> Self {
+        DownloadOptions {
+            is_audio: false,
+            format: "mp4".to_string(),
+            quality: "best".to_string(),
+            max_height: None,
+            subtitle_langs: None,
+            clip: None,
+            rate_limit: None,
+            concurrent_fragments: 4,
+            live_from_start: false,
+            is_live: false,
+            stop: None,
+        }
+    }
+}
+
+#[derive(Default)]
+pub struct AudioMeta {
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+}
+
+#[derive(Clone)]
+pub struct ThumbImage {
+    pub width: usize,
+    pub height: usize,
+    pub rgba: Vec<u8>,
+}
+
+#[derive(Clone, Default)]
+pub struct VideoPreview {
+    pub title: String,
+    pub channel: String,
+    pub duration: String,
+    pub resolutions: Vec<u32>,
+    pub est_size_video: Option<i64>,
+    pub est_size_audio: Option<i64>,
+    pub thumbnail: Option<ThumbImage>,
+    pub is_live: bool,
+}
+
+pub fn format_duration(secs: i64) -> String {
+    let secs = secs.max(0);
+    let h = secs / 3600;
+    let m = (secs % 3600) / 60;
+    let s = secs % 60;
+    if h > 0 {
+        format!("{}:{:02}:{:02}", h, m, s)
+    } else {
+        format!("{}:{:02}", m, s)
+    }
+}
+
+pub fn format_size(bytes: i64) -> String {
+    let b = bytes as f64;
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+    if b >= GB {
+        format!("{:.2} GB", b / GB)
+    } else if b >= MB {
+        format!("{:.1} MB", b / MB)
+    } else if b >= KB {
+        format!("{:.0} KB", b / KB)
+    } else {
+        format!("{} B", bytes)
+    }
+}
+
+#[derive(Clone)]
+pub struct FormatRow {
+    pub id: String,
+    pub ext: String,
+    pub resolution: String,
+    pub fps: String,
+    pub codec: String,
+    pub kind: String,
+    pub bitrate: String,
+    pub size: Option<i64>,
+}
+
+pub fn organize_subfolder(organize_by: &str, media_type: &str, channel: &str) -> Option<String> {
+    match organize_by {
+        "type" => Some(
+            match media_type {
+                "music" => "Música",
+                "video" => "Vídeo",
+                "convert" => "Convertidos",
+                _ => "Outros",
+            }
+            .to_string(),
+        ),
+        "date" => Some(chrono::Local::now().format("%Y-%m-%d").to_string()),
+        "channel" => {
+            let c = sanitize_filename(channel);
+            if c.trim().is_empty() || c == "download" {
+                None
+            } else {
+                Some(c)
+            }
+        }
+        _ => None,
+    }
+}
+
+pub fn is_audio_format(format: &str) -> bool {
+    matches!(
+        format,
+        "mp3" | "m4a" | "aac" | "opus" | "ogg" | "wav" | "flac"
+    )
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum FileCategory {
+    Audio,
+    Video,
+    Image,
+    Document,
+    Office,
+    Unknown,
+}
+
+pub fn categorize(path: &Path) -> FileCategory {
+    let ext = path
+        .extension()
+        .map(|e| e.to_string_lossy().to_lowercase())
+        .unwrap_or_default();
+
+    match ext.as_str() {
+        "mp3" | "m4a" | "aac" | "opus" | "ogg" | "oga" | "wav" | "flac" | "wma" | "aiff"
+        | "alac" => FileCategory::Audio,
+        "mp4" | "mkv" | "webm" | "avi" | "mov" | "flv" | "wmv" | "m4v" | "mpeg" | "mpg"
+        | "3gp" | "ts" | "m2ts" => FileCategory::Video,
+        "jpg" | "jpeg" | "png" | "webp" | "bmp" | "tiff" | "tif" | "gif" | "heic" | "ico" => {
+            FileCategory::Image
+        }
+        "pdf" => FileCategory::Document,
+        "doc" | "docx" | "odt" | "rtf" | "txt" | "ppt" | "pptx" | "odp" | "xls" | "xlsx"
+        | "ods" | "csv" | "epub" => FileCategory::Office,
+        _ => FileCategory::Unknown,
+    }
+}
+
+pub fn output_formats(category: FileCategory) -> Vec<&'static str> {
+    match category {
+        FileCategory::Audio => vec!["mp3", "m4a", "aac", "opus", "ogg", "wav", "flac"],
+        FileCategory::Video => vec![
+            "mp4", "mkv", "webm", "avi", "mov", "gif", "mp3", "m4a", "wav",
+        ],
+        FileCategory::Image => vec!["jpg", "png", "webp", "bmp", "tiff", "gif", "pdf"],
+        FileCategory::Document => vec!["png", "jpg", "txt"],
+        FileCategory::Office => vec!["pdf", "txt"],
+        FileCategory::Unknown => vec![],
+    }
+}
