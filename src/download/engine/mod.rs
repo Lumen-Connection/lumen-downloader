@@ -45,9 +45,7 @@ pub struct DownloadEngine {
 
 impl DownloadEngine {
     pub async fn new(output_dir: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
-        let data_dir = dirs::data_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("LumenDownloader");
+        let data_dir = crate::paths::data_dir();
         let libs_dir = data_dir.join("libs");
         std::fs::create_dir_all(&libs_dir)?;
         std::fs::create_dir_all(&output_dir)?;

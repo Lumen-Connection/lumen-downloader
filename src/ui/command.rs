@@ -22,6 +22,7 @@ pub fn all_commands(pt: bool) -> Vec<(String, Cmd)> {
         go("📋", if pt { "Fila" } else { "Queue" }, Tab::Queue),
         go("📁", if pt { "Pastas" } else { "Folders" }, Tab::Folders),
         go("🖼", if pt { "Galeria" } else { "Gallery" }, Tab::Gallery),
+        go("🎮", if pt { "Sincronizar Jogos" } else { "Sync to Games" }, Tab::Games),
         go("☁", if pt { "Nuvem" } else { "Cloud" }, Tab::Cloud),
         go("📊", if pt { "Estatísticas" } else { "Statistics" }, Tab::Stats),
         go("🏆", if pt { "Conquistas" } else { "Achievements" }, Tab::Achievements),
@@ -47,7 +48,6 @@ pub fn all_commands(pt: bool) -> Vec<(String, Cmd)> {
 }
 
 pub fn run(app: &mut App, cmd: Cmd) {
-    let pt = app.config.lang == crate::ui::i18n::Lang::Pt;
     match cmd {
         Cmd::Go(tab) => app.active_tab = tab,
         Cmd::UpdateYtdlp => {
@@ -69,16 +69,6 @@ pub fn run(app: &mut App, cmd: Cmd) {
             app.config.save();
             app.restyle = true;
         }
-        Cmd::ClearTemp => {
-            let n = app.clear_temp_files();
-            app.toast(
-                if pt {
-                    format!("{} arquivo(s) temporário(s) removido(s)", n)
-                } else {
-                    format!("{} temp file(s) removed", n)
-                },
-                false,
-            );
-        }
+        Cmd::ClearTemp => app.clear_temp_files_toast(),
     }
 }

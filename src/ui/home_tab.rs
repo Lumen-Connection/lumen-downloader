@@ -76,6 +76,9 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
                     app.config.save();
                 }
             }
+            if ui.add(theme::ghost_button(s.btn_clear_temp)).clicked() {
+                app.clear_temp_files_toast();
+            }
         });
     });
     ui.add_space(6.0);

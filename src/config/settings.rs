@@ -174,7 +174,7 @@ impl Default for Config {
     fn default() -> Self {
         let downloads_dir = dirs::download_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("LumenDownloader");
+            .join("LumenStream");
 
         Config {
             default_download_dir: downloads_dir,
@@ -224,9 +224,7 @@ impl Default for Config {
 
 impl Config {
     fn data_dir() -> PathBuf {
-        dirs::data_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("LumenDownloader")
+        crate::paths::data_dir()
     }
 
     pub fn config_path() -> PathBuf {

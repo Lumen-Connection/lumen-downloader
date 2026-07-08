@@ -218,6 +218,18 @@ impl Database {
             .unwrap_or((0, 0))
     }
 
+    /// Reescreve o prefixo de caminho em todo o histórico (usado ao renomear a
+    /// pasta de downloads no rebrand, p/ os arquivos continuarem localizáveis).
+    pub fn rewrite_path_prefix(&self, old: &str, new: &str) {
+        self.conn
+            .execute(
+                "UPDATE history SET file_path = replace(file_path, ?1, ?2), \
+                 folder_path = replace(folder_path, ?1, ?2)",
+                params![old, new],
+            )
+            .ok();
+    }
+
     pub fn update_file_path(&self, id: i64, new_path: &str) {
         self.conn
             .execute(

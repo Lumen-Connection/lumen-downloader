@@ -257,7 +257,14 @@ impl DownloadEngine {
         ));
 
         const MAX_ATTEMPTS: u32 = 2;
+        // Watchdog de estagnação: se os .part não crescerem pelo menos
+        // STALL_MIN_GROWTH dentro de STALL_WINDOW, a tentativa é abortada.
+        // Sem isso, uma fonte que estrangula a conexão a conta-gotas (ex.: X/
+        // Twitter com mídia bloqueada) deixa o yt-dlp pendurado para sempre.
+        const STALL_WINDOW: Duration = Duration::from_secs(180);
+        const STALL_MIN_GROWTH: u64 = 256 * 1024;
         let mut last_err = String::new();
+        let mut last_stalled = false;
 
         for attempt in 0..MAX_ATTEMPTS {
             let mut cmd = tokio::process::Command::new(self.ytdlp_path());
@@ -391,6 +398,9 @@ impl DownloadEngine {
                 (0.0f64, 0.0f64, 0u64, 0u64);
             let stop = opts.stop.clone();
             let mut stopped = false;
+            let mut stalled = false;
+            let mut stall_mark = 0u64;
+            let mut stall_at = std::time::Instant::now();
             // Em live, o yt-dlp entrega ao ffmpeg (progresso vai pro stderr, não pra
             // cá) — então lemos o tamanho direto dos .part no disco, num tick.
             let mut tick = tokio::time::interval(Duration::from_millis(500));
@@ -433,6 +443,22 @@ impl DownloadEngine {
                     }
                     _ = tick.tick() => {
                         let bytes = part_bytes(&folder, &stem);
+                        // Watchdog: não vale para lives (pausas do streamer são
+                        // normais) nem para o pós-processamento (com o download
+                        // completo, os bytes param de crescer enquanto o ffmpeg
+                        // faz merge/extração).
+                        if opts.is_live || last_frac >= 0.99 || bytes >= stall_mark + STALL_MIN_GROWTH {
+                            stall_mark = stall_mark.max(bytes);
+                            stall_at = std::time::Instant::now();
+                        } else if stall_at.elapsed() >= STALL_WINDOW {
+                            stalled = true;
+                            // Mata a árvore (yt-dlp + ffmpeg filho) como no cancelamento.
+                            if let Some(pid) = child_pid {
+                                kill_tree(pid);
+                            }
+                            let _ = child.start_kill();
+                            break;
+                        }
                         if bytes != last_bytes {
                             let delta = bytes.saturating_sub(last_bytes) as f64 / 0.5;
                             last_bytes = bytes;
@@ -498,7 +524,16 @@ impl DownloadEngine {
             }
 
             last_err = stderr_text;
-            crate::applog::error(&format!("download falhou (tentativa {}): {}", attempt + 1, last_err.lines().last().unwrap_or("")));
+            last_stalled = stalled;
+            if stalled {
+                crate::applog::error(&format!(
+                    "download estagnou (sem crescimento por {}s) — tentativa {} abortada",
+                    STALL_WINDOW.as_secs(),
+                    attempt + 1
+                ));
+            } else {
+                crate::applog::error(&format!("download falhou (tentativa {}): {}", attempt + 1, last_err.lines().last().unwrap_or("")));
+            }
 
             // Live que caiu no meio da gravação: em vez de re-tentar (e arriscar
             // sobrescrever horas já gravadas), finaliza o que está no disco.
@@ -516,6 +551,12 @@ impl DownloadEngine {
         }
 
         cleanup_partials(&folder, &stem);
+        if last_stalled {
+            return Err("O download estagnou: nenhum dado novo por 3 minutos. \
+                        A fonte pode estar limitando ou bloqueando a conexão — \
+                        tente novamente mais tarde ou em outra qualidade."
+                .into());
+        }
         Err(friendly_error(&last_err).into())
     }
 

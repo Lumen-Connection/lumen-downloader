@@ -54,6 +54,9 @@ pub struct App {
     pub history_tag_edit: Option<(i64, String)>,
     pub home_edit: bool,
     pub selected: std::collections::HashSet<i64>,
+    /// Aba "Sincronizar Jogos": jogo escolhido e ids do histórico marcados.
+    pub selected_game: Option<crate::games::GameTarget>,
+    pub game_sync_selected: std::collections::HashSet<i64>,
     pub orphans: Option<Vec<PathBuf>>,
     pub profile_draft: crate::config::settings::DownloadProfile,
     pub fullscreen: bool,
@@ -119,6 +122,7 @@ pub enum Tab {
     Queue,
     Folders,
     Gallery,
+    Games,
     Cloud,
     Stats,
     Achievements,
@@ -136,6 +140,7 @@ impl Tab {
             Tab::Queue => "queue",
             Tab::Folders => "folders",
             Tab::Gallery => "gallery",
+            Tab::Games => "games",
             Tab::Cloud => "cloud",
             Tab::Stats => "stats",
             Tab::Achievements => "achievements",
@@ -151,6 +156,7 @@ impl Tab {
             "queue" => Tab::Queue,
             "folders" => Tab::Folders,
             "gallery" => Tab::Gallery,
+            "games" => Tab::Games,
             "cloud" => Tab::Cloud,
             "stats" => Tab::Stats,
             "achievements" => Tab::Achievements,
@@ -212,9 +218,27 @@ pub enum MediaType {
 
 impl App {
     pub fn new() -> Self {
-        let config = Config::load();
+        let mut config = Config::load();
         let db = Database::open(&config.db_path());
         db.purge_old_trash(30);
+
+        // Migração de rebrand: renomeia a pasta de downloads "LumenDownloader" →
+        // "LumenStream" uma única vez, reescrevendo os caminhos do histórico para
+        // os arquivos continuarem localizáveis. Best-effort: qualquer falha deixa
+        // tudo como estava (a pasta antiga continua funcionando).
+        if config.default_download_dir.file_name().and_then(|n| n.to_str()) == Some("LumenDownloader")
+        {
+            let old_dir = config.default_download_dir.clone();
+            let new_dir = old_dir.with_file_name("LumenStream");
+            if old_dir.exists()
+                && !new_dir.exists()
+                && std::fs::rename(&old_dir, &new_dir).is_ok()
+            {
+                db.rewrite_path_prefix(&old_dir.to_string_lossy(), &new_dir.to_string_lossy());
+                config.default_download_dir = new_dir;
+                config.save();
+            }
+        }
 
         let engine_holder: Arc<Mutex<Option<DownloadEngine>>> = Arc::new(Mutex::new(None));
 
@@ -287,6 +311,8 @@ impl App {
             history_tag_edit: None,
             home_edit: false,
             selected: std::collections::HashSet::new(),
+            selected_game: None,
+            game_sync_selected: std::collections::HashSet::new(),
             orphans: None,
             profile_draft: crate::config::settings::DownloadProfile {
                 name: String::new(),
@@ -405,7 +431,7 @@ impl App {
 
     /// Alterna a aba ativa (usado pelos gatilhos do controle).
     pub fn cycle_tab(&mut self, delta: i32) {
-        const ORDER: [Tab; 12] = [
+        const ORDER: [Tab; 13] = [
             Tab::Home,
             Tab::Music,
             Tab::Video,
@@ -413,6 +439,7 @@ impl App {
             Tab::Queue,
             Tab::Folders,
             Tab::Gallery,
+            Tab::Games,
             Tab::Cloud,
             Tab::Stats,
             Tab::Achievements,
@@ -450,11 +477,23 @@ impl App {
         count
     }
 
+    /// Limpa os temporários e avisa o resultado por toast (botão em Início,
+    /// Música, Vídeo, Configurações e na paleta de comandos).
+    pub fn clear_temp_files_toast(&mut self) {
+        let pt = self.config.lang == crate::ui::i18n::Lang::Pt;
+        let n = self.clear_temp_files();
+        self.toast(
+            if pt {
+                format!("{} arquivo(s) temporário(s) removido(s)", n)
+            } else {
+                format!("{} temp file(s) removed", n)
+            },
+            false,
+        );
+    }
+
     pub fn reinstall_dependencies(&mut self) {
-        let libs = dirs::data_dir()
-            .unwrap_or_else(|| std::path::PathBuf::from("."))
-            .join("LumenDownloader")
-            .join("libs");
+        let libs = crate::paths::data_dir().join("libs");
         let _ = std::fs::remove_dir_all(&libs);
         self.engine = None;
         *self.engine_holder.lock().unwrap() = None;
@@ -512,7 +551,7 @@ impl App {
             );
             return;
         }
-        let p = std::path::Path::new(path);
+        let p = std::path::PathBuf::from(path);
         if !p.exists() {
             self.toast_undo(
                 if pt {
@@ -524,35 +563,42 @@ impl App {
             );
             return;
         }
+        // Exclusão do arquivo em background: no Windows, mover para a Lixeira é
+        // uma chamada COM do Explorer que pode levar segundos — na thread da UI
+        // ela congela o app e impede excluir vários itens em sequência.
         // Preferir a Lixeira do SO (recuperável); só apagar de vez se falhar.
-        if trash::delete(p).is_ok() {
-            self.toast(
-                if pt {
-                    "🗑 Item e arquivo enviados para a Lixeira"
-                } else {
-                    "🗑 Item and file sent to the Recycle Bin"
-                },
-                false,
-            );
-        } else if std::fs::remove_file(p).is_ok() {
-            self.toast(
-                if pt {
-                    "🗑 Item e arquivo excluídos"
-                } else {
-                    "🗑 Item and file deleted"
-                },
-                false,
-            );
-        } else {
-            self.toast(
-                if pt {
-                    "Removido do histórico, mas não foi possível excluir o arquivo"
-                } else {
-                    "Removed from history, but the file could not be deleted"
-                },
-                true,
-            );
-        }
+        let q = self.toast_queue.clone();
+        tokio::task::spawn_blocking(move || {
+            let (msg, err) = if trash::delete(&p).is_ok() {
+                (
+                    if pt {
+                        "🗑 Item e arquivo enviados para a Lixeira"
+                    } else {
+                        "🗑 Item and file sent to the Recycle Bin"
+                    },
+                    false,
+                )
+            } else if std::fs::remove_file(&p).is_ok() {
+                (
+                    if pt {
+                        "🗑 Item e arquivo excluídos"
+                    } else {
+                        "🗑 Item and file deleted"
+                    },
+                    false,
+                )
+            } else {
+                (
+                    if pt {
+                        "Removido do histórico, mas não foi possível excluir o arquivo"
+                    } else {
+                        "Removed from history, but the file could not be deleted"
+                    },
+                    true,
+                )
+            };
+            q.lock().unwrap().push((msg.to_string(), err));
+        });
     }
 
     fn push_toast(&mut self, text: String, error: bool, undo: Option<i64>) {
@@ -612,17 +658,11 @@ impl App {
     }
 
     fn queue_path() -> PathBuf {
-        dirs::data_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("LumenDownloader")
-            .join("queue.json")
+        crate::paths::data_dir().join("queue.json")
     }
 
     fn thumb_dir() -> PathBuf {
-        dirs::data_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("LumenDownloader")
-            .join("thumbs")
+        crate::paths::data_dir().join("thumbs")
     }
 
     fn load_ready_thumbs(&mut self, ctx: &egui::Context) {
@@ -1528,7 +1568,7 @@ impl App {
             (t && !i.modifiers.shift, t && i.modifiers.shift)
         });
         if cycle_next || cycle_prev {
-            const ORDER: [Tab; 12] = [
+            const ORDER: [Tab; 13] = [
                 Tab::Home,
                 Tab::Music,
                 Tab::Video,
@@ -1536,6 +1576,7 @@ impl App {
                 Tab::Queue,
                 Tab::Folders,
                 Tab::Gallery,
+                Tab::Games,
                 Tab::Cloud,
                 Tab::Stats,
                 Tab::Achievements,
@@ -1640,6 +1681,26 @@ impl eframe::App for App {
         // senão processos órfãos seguram os pipes e travam o encerramento do app.
         if let Some(eng) = &self.engine {
             eng.kill_downloads();
+        }
+        // Download comum interrompido pelo fechamento: remove os .part órfãos.
+        // Gravação de live fica no disco — os .part são a única cópia dos dados
+        // e permitem recuperação manual.
+        let (downloading, is_live, folder, file_name) = {
+            let op = self.operation.lock().unwrap();
+            (
+                matches!(op.phase, DownloadPhase::Downloading(_)),
+                op.is_live,
+                op.folder_path.clone(),
+                op.file_name.clone(),
+            )
+        };
+        if downloading && !is_live {
+            if let Some(stem) = std::path::Path::new(&file_name)
+                .file_stem()
+                .and_then(|s| s.to_str())
+            {
+                crate::download::engine::cleanup_partials(&folder, stem);
+            }
         }
     }
 

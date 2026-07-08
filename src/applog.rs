@@ -3,9 +3,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 fn log_path() -> PathBuf {
-    let dir = dirs::data_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("LumenDownloader");
+    let dir = crate::paths::data_dir();
     let _ = std::fs::create_dir_all(&dir);
     dir.join("lumen.log")
 }

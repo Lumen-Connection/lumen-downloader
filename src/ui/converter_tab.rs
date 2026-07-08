@@ -870,6 +870,7 @@ fn image_batch_card(app: &mut App, ui: &mut egui::Ui) {
     let pt = app.config.lang == crate::ui::i18n::Lang::Pt;
     let mut run = false;
     theme::card_frame().show(ui, |ui| {
+        ui.set_min_width(ui.available_width());
         ui.label(
             egui::RichText::new(if pt { "🖼 Imagens em lote" } else { "🖼 Batch images" })
                 .color(theme::text())
@@ -983,6 +984,7 @@ fn pdf_card(app: &mut App, ui: &mut egui::Ui) {
     let mut compress = false;
 
     theme::card_frame().show(ui, |ui| {
+        ui.set_min_width(ui.available_width());
         ui.label(
             egui::RichText::new(if pt { "📄 Ferramentas de PDF" } else { "📄 PDF tools" })
                 .color(theme::text())

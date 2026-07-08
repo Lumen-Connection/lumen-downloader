@@ -713,15 +713,7 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
     });
 
     if do_clear {
-        let n = app.clear_temp_files();
-        app.toast(
-            if pt {
-                format!("{} arquivo(s) temporário(s) removido(s)", n)
-            } else {
-                format!("{} temp file(s) removed", n)
-            },
-            false,
-        );
+        app.clear_temp_files_toast();
     }
     if do_archive {
         let n = app.archive_old(30);

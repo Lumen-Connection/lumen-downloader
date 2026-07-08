@@ -67,11 +67,7 @@ pub fn border() -> Color32 {
 }
 
 pub fn accent() -> Color32 {
-    if is_light() {
-        rgb(0x0c, 0xa0, 0xc8)
-    } else {
-        rgb(0x2f, 0xd0, 0xee)
-    }
+    rgb(0xff, 0x57, 0x22)
 }
 pub fn accent_soft() -> Color32 {
     let a = accent();

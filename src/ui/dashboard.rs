@@ -69,7 +69,7 @@ fn render_onboarding(app: &mut App, ctx: &egui::Context) {
         return;
     }
     let pt = app.config.lang == crate::ui::i18n::Lang::Pt;
-    egui::Window::new(if pt { "Bem-vindo ao Lumen Downloader" } else { "Welcome to Lumen Downloader" })
+    egui::Window::new(if pt { "Bem-vindo ao Lumen Stream" } else { "Welcome to Lumen Stream" })
         .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
         .collapsible(false)
         .resizable(false)
@@ -413,6 +413,7 @@ pub fn render_tab_content(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui,
         Tab::Queue => crate::ui::queue_tab::render(app, ctx, ui),
         Tab::Folders => crate::ui::folders_tab::render(app, ctx, ui),
         Tab::Gallery => crate::ui::gallery_tab::render(app, ctx, ui),
+        Tab::Games => crate::ui::games_tab::render(app, ctx, ui),
         Tab::Cloud => crate::ui::cloud_tab::render(app, ctx, ui),
         Tab::Stats => crate::ui::stats_tab::render(app, ctx, ui),
         Tab::Achievements => crate::ui::achievements_tab::render(app, ctx, ui),
@@ -430,6 +431,7 @@ fn tab_title(tab: Tab, s: &crate::ui::i18n::Strings) -> &'static str {
         Tab::Queue => s.nav_queue,
         Tab::Folders => s.nav_folders,
         Tab::Gallery => s.nav_gallery,
+        Tab::Games => s.nav_games,
         Tab::Cloud => s.nav_cloud,
         Tab::Stats => s.nav_stats,
         Tab::Achievements => s.nav_achievements,
@@ -913,6 +915,7 @@ fn render_sidebar(app: &mut App, ctx: &egui::Context) {
                 ("📋", s.nav_queue, Tab::Queue),
                 ("📁", s.nav_folders, Tab::Folders),
                 ("🖼", s.nav_gallery, Tab::Gallery),
+                ("🎮", s.nav_games, Tab::Games),
                 ("☁", s.nav_cloud, Tab::Cloud),
                 ("📊", s.nav_stats, Tab::Stats),
                 ("🏆", s.nav_achievements, Tab::Achievements),
@@ -2045,7 +2048,14 @@ fn render_modal(app: &mut App, ctx: &egui::Context) {
                                 }
                             });
                         } else {
-                            ui.label(msg.as_str());
+                            // "Iniciando download..." fica obsoleto assim que os
+                            // primeiros bytes chegam — troca por um rótulo honesto.
+                            let display = if live_bytes > 0 && msg.starts_with("Iniciando") {
+                                if pt { "Baixando..." } else { "Downloading..." }
+                            } else {
+                                msg.as_str()
+                            };
+                            ui.label(display);
                             match progress {
                                 Some(p) => {
                                     ui.add(
@@ -2072,6 +2082,17 @@ fn render_modal(app: &mut App, ctx: &egui::Context) {
                                 .color(theme::accent())
                                 .strong(),
                             );
+                            if live_bytes > 0 {
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "💾 {} {}",
+                                        crate::download::engine::format_size(live_bytes as i64),
+                                        if pt { "baixados" } else { "downloaded" }
+                                    ))
+                                    .color(theme::text_muted())
+                                    .size(12.0),
+                                );
+                            }
                             sparkline(ui, &hist);
                             ui.add_space(8.0);
                             if ui

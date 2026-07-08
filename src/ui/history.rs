@@ -177,13 +177,13 @@ pub fn render(
     } else if app.config.history_grid {
         let tt = |p: &'static str, e: &'static str| if pt { p } else { e };
         theme::card_frame().show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            egui::ScrollArea::vertical()
-                .id_source(format!("hist_grid_{}", media_type))
-                .max_height(420.0)
-                .show(ui, |ui| {
-                    let cols = (((ui.available_width() + 12.0) / 220.0).floor() as usize).max(1);
-                    for chunk in filtered.chunks(cols) {
+            // Sem ScrollArea aninhado: ele cortaria a grade ao rolar a página até o
+            // fim. set_width fixa a largura ao container (min preenche, max impede as
+            // colunas de extrapolar a margem) — o limite que o ScrollArea dava antes.
+            let avail = ui.available_width();
+            ui.set_width(avail);
+            let cols = (((avail + 12.0) / 220.0).floor() as usize).max(1);
+            for chunk in filtered.chunks(cols) {
                         ui.columns(cols, |c| {
                             for (k, entry) in chunk.iter().enumerate() {
                                 let ui = &mut c[k];
@@ -201,6 +201,10 @@ pub fn render(
                                                 entry.format.as_str(),
                                                 "mp4" | "mkv" | "webm" | "avi" | "mov"
                                             );
+                                            // Imagens também ganham preview real (via ffmpeg,
+                                            // mesmo caminho cacheado dos vídeos), padronizando
+                                            // o histórico de conversões com o de downloads.
+                                            let show_thumb = is_video || is_image_format(&entry.format);
                                             let placeholder = |ui: &mut egui::Ui, label: Option<&str>| {
                                                 let (rect, _) = ui.allocate_exact_size(
                                                     egui::vec2(cw, thumb_h),
@@ -221,7 +225,7 @@ pub fn render(
                                                     );
                                                 }
                                             };
-                                            if is_video {
+                                            if show_thumb {
                                                 app.request_thumb(&entry.file_path);
                                                 if let Some(tex) =
                                                     app.thumb_textures.get(&entry.file_path)
@@ -273,6 +277,11 @@ pub fn render(
                                             });
                                             ui.add_space(2.0);
                                             ui.horizontal(|ui| {
+                                                // Compacto: com o 🎧 dos áudios são 6 botões —
+                                                // se a fileira passar da coluna, o ui.columns
+                                                // alarga o grid inteiro além da margem.
+                                                ui.spacing_mut().item_spacing.x = 4.0;
+                                                ui.spacing_mut().button_padding = egui::vec2(2.0, 4.0);
                                                 if icon_button(ui, "▶", tt("Abrir", "Open")) {
                                                     open::that(&entry.file_path).ok();
                                                 }
@@ -369,11 +378,10 @@ pub fn render(
                         });
                         ui.add_space(12.0);
                     }
-                });
         });
     } else {
         theme::card_frame().show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
+            ui.set_width(ui.available_width());
             let tt = |p: &'static str, e: &'static str| if pt { p } else { e };
             const ROW_H: f32 = 40.0;
             let fmt_w = 80.0;
@@ -399,11 +407,7 @@ pub fn render(
             });
             ui.add_space(4.0);
 
-            egui::ScrollArea::vertical()
-                .id_source(format!("hist_scroll_{}", media_type))
-                .max_height(340.0)
-                .show(ui, |ui| {
-                    for (idx, entry) in filtered.iter().enumerate() {
+            for (idx, entry) in filtered.iter().enumerate() {
                         let stripe = if idx % 2 == 1 {
                             theme::bg_card_hover()
                         } else {
@@ -466,7 +470,7 @@ pub fn render(
                                                 entry.format.as_str(),
                                                 "mp4" | "mkv" | "webm" | "avi" | "mov"
                                             );
-                                            if is_video {
+                                            if is_video || is_image_format(&entry.format) {
                                                 app.request_thumb(&entry.file_path);
                                                 if let Some(tex) = app.thumb_textures.get(&entry.file_path) {
                                                     let [w, h] = tex.size();
@@ -591,7 +595,6 @@ pub fn render(
                                 });
                             });
                     }
-                });
         });
     }
 
@@ -647,6 +650,13 @@ pub fn render(
             }
         });
     }
+}
+
+fn is_image_format(format: &str) -> bool {
+    matches!(
+        format,
+        "jpg" | "jpeg" | "png" | "webp" | "bmp" | "tiff" | "tif" | "gif"
+    )
 }
 
 fn is_recent(created_at: &str) -> bool {

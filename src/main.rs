@@ -6,7 +6,9 @@ mod config;
 mod db;
 mod download;
 mod gamepad;
+mod games;
 mod notify;
+mod paths;
 mod player;
 mod queue;
 mod ui;
@@ -15,12 +17,12 @@ fn main() -> eframe::Result<()> {
     let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
     let _enter = rt.enter();
 
-    applog::info("Lumen Downloader iniciado");
+    applog::info("Lumen Stream iniciado");
     let cfg = config::settings::Config::load();
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([cfg.win_w, cfg.win_h])
         .with_min_inner_size([700.0, 450.0])
-        .with_title("Lumen Downloader");
+        .with_title("Lumen Stream");
     if let Some(icon) = load_window_icon() {
         viewport = viewport.with_icon(std::sync::Arc::new(icon));
     }
@@ -30,7 +32,7 @@ fn main() -> eframe::Result<()> {
     };
 
     eframe::run_native(
-        "Lumen Downloader",
+        "Lumen Stream",
         options,
         Box::new(|_cc| {
             let app: Box<dyn eframe::App> = Box::new(app::App::new());
