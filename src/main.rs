@@ -5,11 +5,9 @@ mod applog;
 mod config;
 mod db;
 mod download;
-mod gamepad;
 mod games;
 mod notify;
 mod paths;
-mod player;
 mod queue;
 mod ui;
 
@@ -42,11 +40,14 @@ fn main() -> eframe::Result<()> {
 }
 
 fn load_window_icon() -> Option<egui::IconData> {
-    let bytes = include_bytes!("../assets/FULL LOGO LUMEN DOWLOADER PNG.png");
+    // Com fundo: tile de ícone da janela/barra de tarefas.
+    let bytes = include_bytes!("../assets/LogoOficialLumenStream2.png");
     let rgba = image::load_from_memory(bytes).ok()?.to_rgba8();
     let (w, h) = rgba.dimensions();
     let side = w.min(h);
-    let cropped = image::imageops::crop_imm(&rgba, 0, 0, side, side).to_image();
+    let cx = (w - side) / 2;
+    let cy = (h - side) / 2;
+    let cropped = image::imageops::crop_imm(&rgba, cx, cy, side, side).to_image();
     let icon = image::DynamicImage::ImageRgba8(cropped)
         .thumbnail(256, 256)
         .to_rgba8();

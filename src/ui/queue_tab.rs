@@ -110,29 +110,63 @@ fn enqueue_input(app: &mut App) {
 
     for url in lines {
         if queue::is_playlist(&url) {
-            if let (Some(engine), Some(pid)) =
-                (app.engine.clone(), queue::playlist_id_from_url(&url))
-            {
-                let jobs = app.queue.jobs.clone();
-                let next_id = app.queue.next_id.clone();
-                let (mt, fmt, q, dir) =
-                    (media_type, format.clone(), quality.clone(), folder.clone());
-                tokio::spawn(async move {
-                    if let Ok(items) = engine.fetch_playlist(&pid).await {
-                        for (u, t) in items {
-                            queue::push_job(
-                                &jobs,
-                                &next_id,
-                                u,
-                                t,
-                                mt,
-                                fmt.clone(),
-                                q.clone(),
-                                dir.clone(),
-                            );
-                        }
-                    }
-                });
+            let pt = app.config.lang == crate::ui::i18n::Lang::Pt;
+            match (app.engine.clone(), queue::playlist_id_from_url(&url)) {
+                (Some(engine), Some(pid)) => {
+                    let jobs = app.queue.jobs.clone();
+                    let next_id = app.queue.next_id.clone();
+                    let toasts = app.toast_queue.clone();
+                    let (mt, fmt, q, dir) =
+                        (media_type, format.clone(), quality.clone(), folder.clone());
+                    // Feedback imediato: a busca da playlist roda em background e
+                    // antes falhava/pendurava em silêncio, sem nada aparecer na fila.
+                    app.toast(
+                        if pt { "Buscando itens da playlist..." } else { "Fetching playlist items..." },
+                        false,
+                    );
+                    tokio::spawn(async move {
+                        let result = match engine.fetch_playlist(&pid).await {
+                            Ok(items) if !items.is_empty() => {
+                                let n = items.len();
+                                for (u, t) in items {
+                                    queue::push_job(
+                                        &jobs, &next_id, u, t, mt, fmt.clone(), q.clone(), dir.clone(),
+                                    );
+                                }
+                                (
+                                    if pt {
+                                        format!("{} itens da playlist adicionados à fila", n)
+                                    } else {
+                                        format!("{} playlist items added to the queue", n)
+                                    },
+                                    false,
+                                )
+                            }
+                            Ok(_) => (
+                                if pt { "Playlist vazia ou indisponível.".to_string() }
+                                else { "Playlist empty or unavailable.".to_string() },
+                                true,
+                            ),
+                            Err(e) => {
+                                let m = crate::download::engine::friendly_error(&e.to_string());
+                                (
+                                    if pt { format!("Falha ao buscar a playlist: {}", m) }
+                                    else { format!("Failed to fetch playlist: {}", m) },
+                                    true,
+                                )
+                            }
+                        };
+                        toasts.lock().unwrap().push(result);
+                    });
+                }
+                _ => app.toast(
+                    if pt {
+                        "Aguarde o app terminar de iniciar e tente novamente."
+                    } else {
+                        "Wait for the app to finish starting and try again."
+                    },
+                    true,
+                ),
             }
         } else {
             app.queue.add(

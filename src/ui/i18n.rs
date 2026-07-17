@@ -193,7 +193,7 @@ static PT: Strings = Strings {
     nav_home: "Início",
     nav_music: "Baixar Música",
     nav_video: "Baixar Vídeo",
-    nav_converter: "Lumen Converter",
+    nav_converter: "Converter",
     nav_queue: "Fila",
     nav_folders: "Pastas",
     nav_gallery: "Galeria",
@@ -205,7 +205,7 @@ static PT: Strings = Strings {
     nav_help: "Ajuda",
 
     download: "Download",
-    home_title: "Bem-vindo ao Lumen",
+    home_title: "Bem-vindo(a) a Lumen Stream",
     home_subtitle: "Cole um link para baixar, ou explore pelas abas ao lado.",
     home_quick: "BAIXAR RÁPIDO (vídeo)",
     home_recents: "Recentes",
@@ -330,7 +330,7 @@ static PT: Strings = Strings {
     view_grid: "▦ Grade",
     view_list: "☰ Lista",
 
-    conv_title: "Lumen Converter",
+    conv_title: "Converter",
     conv_subtitle: "Converta áudio, vídeo, imagens e PDF (PDF → imagens, imagens → PDF).",
     conv_pick: "📂  Selecionar arquivo",
     conv_source: "ARQUIVO DE ORIGEM",
@@ -361,7 +361,7 @@ static EN: Strings = Strings {
     nav_home: "Home",
     nav_music: "Download Music",
     nav_video: "Download Video",
-    nav_converter: "Lumen Converter",
+    nav_converter: "Converter",
     nav_queue: "Queue",
     nav_folders: "Folders",
     nav_gallery: "Gallery",
@@ -373,7 +373,7 @@ static EN: Strings = Strings {
     nav_help: "Help",
 
     download: "Download",
-    home_title: "Welcome to Lumen",
+    home_title: "Welcome to Lumen Stream",
     home_subtitle: "Paste a link to download, or explore the tabs on the left.",
     home_quick: "QUICK DOWNLOAD (video)",
     home_recents: "Recent",
@@ -498,7 +498,7 @@ static EN: Strings = Strings {
     view_grid: "▦ Grid",
     view_list: "☰ List",
 
-    conv_title: "Lumen Converter",
+    conv_title: "Converter",
     conv_subtitle: "Convert audio, video, images and PDF (PDF → images, images → PDF).",
     conv_pick: "📂  Select file",
     conv_source: "SOURCE FILE",

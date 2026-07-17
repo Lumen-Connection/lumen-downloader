@@ -2,8 +2,6 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use yt_dlp::client::deps::Libraries;
-// Trait que dá a Video os métodos best_video_format/best_audio_format.
-use yt_dlp::VideoSelection;
 
 use super::fs_utils::{
     binary_path, cleanup_partials, concat_frag_groups, find_output, frag_bytes, part_bytes,
@@ -11,7 +9,7 @@ use super::fs_utils::{
 use super::models::{format_duration, DownloadOptions, FormatRow, Progress, VideoPreview};
 use super::net::download_thumbnail;
 use super::ytdlp_util::{
-    friendly_error, is_youtube, looks_like_url, parse_ytdlp_eta, parse_ytdlp_percent,
+    friendly_error, looks_like_url, parse_ytdlp_eta, parse_ytdlp_percent,
     parse_ytdlp_size, parse_ytdlp_speed, ytdlp_error,
 };
 use super::{kill_tree, wait_for_stop, DownloadEngine};
@@ -40,11 +38,7 @@ impl DownloadEngine {
         &self,
         url: &str,
     ) -> Result<String, Box<dyn std::error::Error>> {
-        if !is_youtube(url) {
-            return self.ytdlp_title(url).await;
-        }
-        let video = self.downloader.fetch_video_infos(url).await?;
-        Ok(video.title.clone())
+        self.ytdlp_title(url).await
     }
 
     pub async fn fetch_preview(
@@ -54,67 +48,13 @@ impl DownloadEngine {
         if let Some(cached) = self.preview_cache.lock().unwrap().get(url).cloned() {
             return Ok(cached);
         }
-        if !is_youtube(url) {
-            let p = self.ytdlp_preview(url).await?;
-            self.preview_cache
-                .lock()
-                .unwrap()
-                .insert(url.to_string(), p.clone());
-            return Ok(p);
-        }
-        let video = self.downloader.fetch_video_infos(url).await?;
-
-        let mut resolutions: Vec<u32> = video
-            .formats
-            .iter()
-            .filter_map(|f| f.video_resolution.height)
-            .collect();
-        resolutions.sort_unstable();
-        resolutions.dedup();
-        resolutions.reverse();
-
-        let best_video = video
-            .best_video_format()
-            .and_then(|f| f.file_info.filesize.or(f.file_info.filesize_approx));
-        let best_audio = video
-            .best_audio_format()
-            .and_then(|f| f.file_info.filesize.or(f.file_info.filesize_approx));
-        let best_combined = video
-            .formats
-            .iter()
-            .filter(|f| f.format_type().is_audio_and_video())
-            .max_by_key(|f| f.video_resolution.height.unwrap_or(0))
-            .and_then(|f| f.file_info.filesize.or(f.file_info.filesize_approx));
-        let est_size_video = match (best_video, best_audio) {
-            (Some(v), Some(a)) => Some(v + a),
-            (Some(v), None) => Some(v),
-            (None, Some(a)) => Some(a),
-            (None, None) => best_combined,
-        };
-        let best_audio = best_audio.or(best_combined);
-
-        let channel = video.channel.clone().or(video.uploader.clone()).unwrap_or_default();
-        let duration = video
-            .duration_string
-            .clone()
-            .or_else(|| video.duration.map(format_duration))
-            .unwrap_or_default();
-
-        let thumbnail = match &video.thumbnail {
-            Some(url) => download_thumbnail(url).await,
-            None => None,
-        };
-
-        let preview = VideoPreview {
-            title: video.title.clone(),
-            channel,
-            duration,
-            resolutions,
-            est_size_video,
-            est_size_audio: best_audio,
-            thumbnail,
-            is_live: video.is_live.unwrap_or(false) || video.live_status == "is_live",
-        };
+        // Sempre pela invocação própria do yt-dlp: `ytdlp_preview` usa
+        // `cmd.output()`, que drena stdout/stderr concorrentemente. Antes o
+        // YouTube ia por `Downloader::fetch_video_infos` (crate yt-dlp), que foi
+        // observado pendurar — o processo yt-dlp não retornava e a UI ficava
+        // presa em "Buscando informações do link...". O download em si já usava
+        // a invocação própria (`ytdlp_download`); isto unifica a busca de info.
+        let preview = self.ytdlp_preview(url).await?;
         self.preview_cache
             .lock()
             .unwrap()
@@ -564,22 +504,38 @@ impl DownloadEngine {
         &self,
         playlist_id: &str,
     ) -> Result<Vec<(String, String)>, Box<dyn std::error::Error>> {
-        let playlist = self
-            .downloader
-            .youtube_extractor()
-            .fetch_playlist_paginated(playlist_id, 1, 1000)
-            .await?;
+        // Invocação própria do yt-dlp, drenada via `cmd.output()`. `--flat-playlist`
+        // apenas enumera os itens (id/título) sem buscar a info completa de cada
+        // vídeo — rápido. Antes usava `youtube_extractor().fetch_playlist_paginated`
+        // do crate yt-dlp, que podia pendurar/falhar silenciosamente, deixando a
+        // fila sem itens. `--print "%(id)s|%(title)s"` dá uma linha por item; o id
+        // (11 chars, sem `|`) fica antes do primeiro `|`, então split_once basta.
+        let url = format!("https://www.youtube.com/playlist?list={}", playlist_id);
+        let mut cmd = tokio::process::Command::new(self.ytdlp_path());
+        cmd.arg("--no-warnings")
+            .arg("--flat-playlist")
+            .arg("--print")
+            .arg("%(id)s|%(title)s")
+            .arg(&url);
+        #[cfg(windows)]
+        cmd.creation_flags(0x08000000);
 
-        let items = playlist
-            .entries
-            .into_iter()
-            .map(|e| {
-                let url = if e.url.starts_with("http") {
-                    e.url
-                } else {
-                    format!("https://www.youtube.com/watch?v={}", e.id)
-                };
-                (url, e.title)
+        let output = cmd.output().await?;
+        if !output.status.success() {
+            return Err(ytdlp_error(&output.stderr).into());
+        }
+
+        let text = String::from_utf8_lossy(&output.stdout);
+        let items = text
+            .lines()
+            .filter_map(|line| {
+                let (id, title) = line.split_once('|')?;
+                let id = id.trim();
+                if id.is_empty() || id == "NA" {
+                    return None;
+                }
+                let url = format!("https://www.youtube.com/watch?v={}", id);
+                Some((url, title.trim().to_string()))
             })
             .collect();
         Ok(items)

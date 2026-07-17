@@ -33,7 +33,7 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
     );
     ui.add_space(20.0);
 
-    let folders = app.db.get_folders();
+    let folders = app.folders();
     if folders.is_empty() {
         theme::card_frame().show(ui, |ui| {
             ui.label(
@@ -83,7 +83,8 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
                             egui::Layout::right_to_left(egui::Align::Center),
                             |ui| {
                                 if icon_button(ui, "🗑", s.folder_remove) {
-                                    app.db.delete_folder(folder.id);
+                                    app.pending_delete_folder =
+                                        Some((folder.id, folder.name.clone(), folder.path.clone()));
                                 }
                                 if icon_button(ui, "✎", s.folder_rename) {
                                     app.folder_edit =

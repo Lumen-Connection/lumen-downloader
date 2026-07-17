@@ -33,7 +33,6 @@ use self::fs_utils::binary_path;
 use self::whisper::find_whisper_exe;
 
 pub struct DownloadEngine {
-    downloader: yt_dlp::Downloader,
     ffmpeg_path: PathBuf,
     libs_dir: PathBuf,
     preview_cache: Mutex<HashMap<String, VideoPreview>>,
@@ -59,13 +58,7 @@ impl DownloadEngine {
         let libraries = libraries.install_dependencies().await?;
         let ffmpeg_path = libraries.ffmpeg.clone();
 
-        let downloader = yt_dlp::Downloader::builder(libraries, &output_dir)
-            .with_timeout(Duration::from_secs(1800))
-            .build()
-            .await?;
-
         Ok(DownloadEngine {
-            downloader,
             ffmpeg_path,
             libs_dir,
             preview_cache: Mutex::new(HashMap::new()),
@@ -171,5 +164,55 @@ async fn wait_for_stop(stop: &Option<Arc<AtomicBool>>) {
             tokio::time::sleep(Duration::from_millis(150)).await;
         },
         None => std::future::pending::<()>().await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Teste real de rede (opt-in): garante que a busca de informações de um vídeo
+    // do YouTube NÃO pendura e retorna um preview. Reproduz o bug corrigido —
+    // antes o caminho do YouTube usava `Downloader::fetch_video_infos` (crate),
+    // que travava (yt-dlp não retornava); agora usa `ytdlp_preview` (cmd.output,
+    // com stdout/stderr drenados). Marcado `#[ignore]` por depender de rede e do
+    // yt-dlp instalado — rode com `cargo test -- --ignored`.
+    #[ignore]
+    #[tokio::test]
+    async fn youtube_preview_does_not_hang() {
+        let out = std::env::temp_dir().join("lumen_stream_engine_test");
+        let engine = DownloadEngine::new(out).await.expect("engine deve inicializar");
+        let url = "https://www.youtube.com/watch?v=ZYmMCJMUhnw";
+        let res = tokio::time::timeout(Duration::from_secs(90), engine.fetch_preview(url)).await;
+        let preview = res
+            .expect("fetch_preview não deve pendurar (timeout de 90s)")
+            .expect("fetch_preview deve retornar um preview");
+        assert!(!preview.title.trim().is_empty(), "preview deve ter título");
+    }
+
+    // Teste real de rede (opt-in): a busca de uma playlist do YouTube não pendura
+    // e retorna itens com URL de vídeo. Reproduz o bug corrigido — antes usava
+    // `youtube_extractor().fetch_playlist_paginated` (crate), que podia travar/
+    // falhar em silêncio e deixar a fila vazia; agora usa yt-dlp `--flat-playlist`
+    // drenado via `cmd.output()`. Rode com `cargo test -- --ignored`.
+    #[ignore]
+    #[tokio::test]
+    async fn playlist_fetch_returns_items() {
+        let out = std::env::temp_dir().join("lumen_stream_engine_test_pl");
+        let engine = DownloadEngine::new(out).await.expect("engine deve inicializar");
+        // Playlist de "uploads" de um canal real (id estável).
+        let res = tokio::time::timeout(
+            Duration::from_secs(90),
+            engine.fetch_playlist("UU57eS8alHoHqPE7iutLb-HQ"),
+        )
+        .await;
+        let items = res
+            .expect("fetch_playlist não deve pendurar (timeout de 90s)")
+            .expect("fetch_playlist deve retornar itens");
+        assert!(!items.is_empty(), "playlist deve ter itens");
+        assert!(
+            items.iter().all(|(u, _)| u.contains("watch?v=")),
+            "cada item deve ter uma URL de vídeo do YouTube"
+        );
     }
 }

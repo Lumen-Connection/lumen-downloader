@@ -141,11 +141,6 @@ pub(super) fn parse_ytdlp_size(line: &str) -> Option<u64> {
     None
 }
 
-pub(super) fn is_youtube(url: &str) -> bool {
-    let u = url.to_lowercase();
-    u.contains("youtube.com") || u.contains("youtu.be")
-}
-
 pub(super) fn ytdlp_error(stderr: &[u8]) -> String {
     let text = String::from_utf8_lossy(stderr);
     let last = text

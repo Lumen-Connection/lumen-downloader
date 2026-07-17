@@ -15,18 +15,9 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
             .size(30.0)
             .strong(),
     );
-    ui.label(
-        egui::RichText::new(if pt {
-            "Um resumo discreto e detalhado da sua atividade."
-        } else {
-            "A discreet, detailed summary of your activity."
-        })
-        .color(theme::text_muted())
-        .size(14.0),
-    );
     ui.add_space(20.0);
 
-    let all = app.db.all_active_history();
+    let all = app.active_history();
     let now = chrono::Local::now().naive_local();
     let parse = |s: &str| {
         chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S").ok()

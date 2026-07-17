@@ -115,8 +115,6 @@ pub struct Config {
     pub watermark_opacity: f32,
     #[serde(default)]
     pub convert_engine: ConvertEngine,
-    #[serde(default = "default_true")]
-    pub gamepad_enabled: bool,
 }
 
 fn default_template() -> String {
@@ -217,7 +215,6 @@ impl Default for Config {
             win_w: default_win_w(),
             win_h: default_win_h(),
             convert_engine: ConvertEngine::default(),
-            gamepad_enabled: true,
         }
     }
 }

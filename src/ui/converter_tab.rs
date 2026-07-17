@@ -92,7 +92,7 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
 
     ui.add_space(20.0);
 
-    let history = app.db.get_history("convert", app.config.max_history);
+    let history = app.history_for("convert", app.config.max_history);
     crate::ui::history::render(
         app,
         ui,

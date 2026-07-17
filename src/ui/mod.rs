@@ -5,7 +5,6 @@ pub mod converter_tab;
 pub mod dashboard;
 pub mod folders_tab;
 pub mod gallery_tab;
-pub mod gamepad_mode;
 pub mod games_tab;
 pub mod history;
 pub mod help_tab;

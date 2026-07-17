@@ -1,27 +1,39 @@
 use std::path::PathBuf;
 
-/// Jogos suportados na sincronização de músicas personalizadas.
-/// Cada jogo lê áudio de uma pasta própria; por ora só o GTA V.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum GameTarget {
     GtaV,
 }
 
-/// Extensões que o rádio "User Music" do GTA V reconhece diretamente.
-/// Qualquer outra é convertida para MP3 antes de copiar.
 pub const GTAV_SUPPORTED: &[&str] = &["mp3", "m4a", "aac", "wma"];
 
-/// Pasta onde o GTA V lê as músicas personalizadas:
-/// `Documentos\Rockstar Games\GTA V\User Music`.
-pub fn gtav_user_music_dir() -> Option<PathBuf> {
-    dirs::document_dir().map(|d| {
-        d.join("Rockstar Games")
-            .join("GTA V")
-            .join("User Music")
-    })
+/// Nomes das pastas de edição do GTA V no PC, em ordem de preferência:
+/// "GTAV Enhanced" (edição de 2025) e "GTA V" (Legacy). As duas usam pastas
+/// separadas dentro de Documentos\Rockstar Games — daí o descasamento se
+/// mirarmos só uma.
+const GTAV_EDITIONS: &[&str] = &["GTAV Enhanced", "GTA V"];
+
+/// Pastas "User Music" das edições do GTA V instaladas. Sincronizar em todas as
+/// que existirem cobre tanto a Enhanced quanto a Legacy sem o usuário precisar
+/// escolher. Se nenhuma existir ainda, mira na Enhanced (versão atual do PC),
+/// que é criada na hora de sincronizar.
+pub fn gtav_user_music_dirs() -> Vec<PathBuf> {
+    let Some(docs) = dirs::document_dir() else {
+        return Vec::new();
+    };
+    let rockstar = docs.join("Rockstar Games");
+    let mut dirs: Vec<PathBuf> = GTAV_EDITIONS
+        .iter()
+        .map(|e| rockstar.join(e))
+        .filter(|d| d.exists())
+        .map(|d| d.join("User Music"))
+        .collect();
+    if dirs.is_empty() {
+        dirs.push(rockstar.join("GTAV Enhanced").join("User Music"));
+    }
+    dirs
 }
 
-/// Verdadeiro se o arquivo já está num formato que o GTA V toca sem conversão.
 pub fn is_gtav_supported(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())

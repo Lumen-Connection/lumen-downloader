@@ -277,20 +277,12 @@ pub fn render(
                                             });
                                             ui.add_space(2.0);
                                             ui.horizontal(|ui| {
-                                                // Compacto: com o 🎧 dos áudios são 6 botões —
-                                                // se a fileira passar da coluna, o ui.columns
-                                                // alarga o grid inteiro além da margem.
+                                                // Compacto: se a fileira passar da coluna, o
+                                                // ui.columns alarga o grid inteiro além da margem.
                                                 ui.spacing_mut().item_spacing.x = 4.0;
                                                 ui.spacing_mut().button_padding = egui::vec2(2.0, 4.0);
                                                 if icon_button(ui, "▶", tt("Abrir", "Open")) {
                                                     open::that(&entry.file_path).ok();
-                                                }
-                                                if crate::player::is_playable_audio(&entry.format)
-                                                    && icon_button(ui, "🎧", tt("Pré-ouvir", "Preview"))
-                                                {
-                                                    app.mini.play(std::path::PathBuf::from(
-                                                        &entry.file_path,
-                                                    ));
                                                 }
                                                 if icon_button(ui, "📁", tt("Pasta", "Folder")) {
                                                     if let Some(p) =
@@ -582,13 +574,6 @@ pub fn render(
                                             }
                                             if icon_button(ui, "▶", tt("Abrir arquivo", "Open file")) {
                                                 open::that(&entry.file_path).ok();
-                                            }
-                                            if crate::player::is_playable_audio(&entry.format)
-                                                && icon_button(ui, "🎧", tt("Pré-ouvir", "Preview"))
-                                            {
-                                                app.mini.play(std::path::PathBuf::from(
-                                                    &entry.file_path,
-                                                ));
                                             }
                                         },
                                     );

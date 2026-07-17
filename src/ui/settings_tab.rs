@@ -3,7 +3,7 @@ use crate::config::settings::{ConvertEngine, Theme};
 use crate::ui::i18n::Lang;
 use crate::ui::theme;
 
-pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
+pub fn render(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
     let s = crate::ui::i18n::s(app.config.lang);
 
     ui.label(
@@ -20,19 +20,58 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
     ui.add_space(20.0);
 
     let mut changed = false;
-    let pt = app.config.lang == Lang::Pt;
-    let mut do_clear = false;
-    let mut do_archive = false;
-    let mut do_reinstall = false;
-    let mut do_orphans = false;
 
     let ncols = if ui.available_width() > 980.0 { 2 } else { 1 };
     let right_idx = if ncols == 2 { 1 } else { 0 };
 
+    // Grade alinhada por linhas: cada par de cartões abre `ui.columns` próprio,
+    // então ambos começam na mesma altura (mesma linha horizontal) e ficam nas
+    // mesmas colunas (mesma linha vertical). As alturas podem diferir — é a
+    // "assimetria" aceitável entre um cartão e outro da mesma linha.
     ui.columns(ncols, |cols| {
-        let ui = &mut cols[0];
+        card_language_theme(&mut cols[0], app, &mut changed);
+        card_organize(&mut cols[right_idx], app, &mut changed);
+    });
+    ui.add_space(16.0);
+    ui.columns(ncols, |cols| {
+        card_accessibility(&mut cols[0], app, &mut changed);
+        card_convert_engine(&mut cols[right_idx], app, &mut changed);
+    });
+    ui.add_space(16.0);
+    ui.columns(ncols, |cols| {
+        card_defaults(&mut cols[0], app, &mut changed);
+        card_maintenance(&mut cols[right_idx], app, &mut changed);
+    });
+    ui.add_space(16.0);
+    ui.columns(ncols, |cols| {
+        card_profiles(&mut cols[0], app, &mut changed);
+    });
 
+    ui.add_space(24.0);
+    ui.separator();
+    ui.add_space(16.0);
+    crate::ui::stats_tab::render(app, ctx, ui);
+
+    ui.add_space(16.0);
+    ui.label(
+        egui::RichText::new(format!(
+            "{}: {}",
+            s.settings_saved_at,
+            crate::config::settings::Config::config_path().to_string_lossy()
+        ))
+        .color(theme::text_faint())
+        .size(12.0),
+    );
+
+    if changed {
+        app.config.save();
+    }
+}
+
+fn card_language_theme(ui: &mut egui::Ui, app: &mut App, changed: &mut bool) {
+    let s = crate::ui::i18n::s(app.config.lang);
     theme::card_frame().show(ui, |ui| {
+        ui.set_min_width(ui.available_width());
         ui.horizontal(|ui| {
             ui.label(s.settings_language);
             for (lang, label) in [(Lang::Pt, "Português"), (Lang::En, "English")] {
@@ -40,7 +79,7 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
                 let fill = if selected { theme::accent() } else { theme::bg_card() };
                 if ui.add(egui::Button::new(label).fill(fill)).clicked() && !selected {
                     app.config.lang = lang;
-                    changed = true;
+                    *changed = true;
                 }
             }
         });
@@ -54,15 +93,17 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
                     app.config.theme = th;
                     theme::set_light(th == Theme::Light);
                     theme::apply(ui.ctx());
-                    changed = true;
+                    *changed = true;
                 }
             }
         });
     });
+}
 
-    ui.add_space(16.0);
-
+fn card_accessibility(ui: &mut egui::Ui, app: &mut App, changed: &mut bool) {
+    let pt = app.config.lang == Lang::Pt;
     theme::card_frame().show(ui, |ui| {
+        ui.set_min_width(ui.available_width());
         ui.label(
             egui::RichText::new(if pt { "Acessibilidade" } else { "Accessibility" })
                 .color(theme::text_muted())
@@ -79,7 +120,7 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
             {
                 app.config.ui_scale = scale;
                 ui.ctx().set_pixels_per_point(scale);
-                changed = true;
+                *changed = true;
             }
         });
         ui.add_space(6.0);
@@ -91,7 +132,7 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
             app.config.high_contrast = hc;
             theme::set_high_contrast(hc);
             theme::apply(ui.ctx());
-            changed = true;
+            *changed = true;
         }
         ui.add_space(6.0);
         let mut compact = app.config.compact_ui;
@@ -102,7 +143,7 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
             app.config.compact_ui = compact;
             theme::set_compact(compact);
             theme::apply(ui.ctx());
-            changed = true;
+            *changed = true;
         }
         ui.add_space(6.0);
         if ui
@@ -116,7 +157,7 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
             )
             .changed()
         {
-            changed = true;
+            *changed = true;
         }
         ui.add_space(6.0);
         let mut tr = app.config.transcribe_translate;
@@ -132,85 +173,16 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
             .changed()
         {
             app.config.transcribe_translate = tr;
-            changed = true;
+            *changed = true;
         }
     });
+}
 
-    ui.add_space(16.0);
-
+fn card_defaults(ui: &mut egui::Ui, app: &mut App, changed: &mut bool) {
+    let s = crate::ui::i18n::s(app.config.lang);
+    let pt = app.config.lang == Lang::Pt;
     theme::card_frame().show(ui, |ui| {
-        ui.label(
-            egui::RichText::new(if pt { "Controle (Joystick)" } else { "Gamepad" })
-                .color(theme::text_muted())
-                .size(11.0)
-                .strong(),
-        );
-        ui.add_space(8.0);
-        if ui
-            .checkbox(
-                &mut app.config.gamepad_enabled,
-                if pt {
-                    "Navegar com controle (DualSense e compatíveis)"
-                } else {
-                    "Navigate with a gamepad (DualSense and compatible)"
-                },
-            )
-            .changed()
-        {
-            changed = true;
-        }
-        ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            let (dot, color) = if app.gamepad.connected {
-                ("●", theme::accent())
-            } else {
-                ("○", theme::text_faint())
-            };
-            ui.label(egui::RichText::new(dot).color(color));
-            let status = if app.gamepad.connected {
-                if pt {
-                    format!("Conectado: {}", app.gamepad.name)
-                } else {
-                    format!("Connected: {}", app.gamepad.name)
-                }
-            } else if pt {
-                "Nenhum controle detectado".to_string()
-            } else {
-                "No gamepad detected".to_string()
-            };
-            ui.label(egui::RichText::new(status).color(theme::text_muted()).size(12.0));
-        });
-        ui.add_space(6.0);
-        ui.label(
-            egui::RichText::new(if pt {
-                "L1/R1: trocar aba · D-pad: navegar · ✕: confirmar · ○: voltar · △: tocar/pausar · ▢: parar · Options: comandos · PS: modo controle"
-            } else {
-                "L1/R1: switch tab · D-pad: navigate · ✕: confirm · ○: back · △: play/pause · ▢: stop · Options: palette · PS: gamepad mode"
-            })
-            .color(theme::text_faint())
-            .size(11.0),
-        );
-        ui.add_space(8.0);
-        if ui
-            .add(theme::ghost_button(if pt {
-                "🎮 Entrar no Modo Games"
-            } else {
-                "🎮 Enter Games Mode"
-            }))
-            .on_hover_text(if pt {
-                "Interface completa navegável pelo controle (ou pelo botão PS)."
-            } else {
-                "Full interface navigable by the gamepad (or the PS button)."
-            })
-            .clicked()
-        {
-            app.toggle_gamepad_mode();
-        }
-    });
-
-    ui.add_space(16.0);
-
-    theme::card_frame().show(ui, |ui| {
+        ui.set_min_width(ui.available_width());
         ui.label(
             egui::RichText::new(s.settings_defaults)
                 .color(theme::text_muted())
@@ -227,7 +199,7 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
                 .changed()
             {
                 app.config.default_download_dir = std::path::PathBuf::from(&path_str);
-                changed = true;
+                *changed = true;
             }
             if ui
                 .add(egui::Button::new(egui::RichText::new("📁").color(egui::Color32::WHITE)).fill(theme::accent()))
@@ -235,17 +207,17 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
             {
                 if let Some(picked) = rfd::FileDialog::new().pick_folder() {
                     app.config.default_download_dir = picked;
-                    changed = true;
+                    *changed = true;
                 }
             }
         });
         ui.add_space(10.0);
 
-        changed |= format_row(ui, s.settings_music_format, &["mp3", "m4a", "opus", "flac"], &mut app.config.music_format);
+        *changed |= format_row(ui, s.settings_music_format, &["mp3", "m4a", "opus", "flac"], &mut app.config.music_format);
         ui.add_space(6.0);
-        changed |= format_row(ui, s.settings_video_format, &["mp4", "mkv", "webm"], &mut app.config.video_format);
+        *changed |= format_row(ui, s.settings_video_format, &["mp4", "mkv", "webm"], &mut app.config.video_format);
         ui.add_space(6.0);
-        changed |= format_row(ui, s.settings_quality, &["best", "medium", "high"], &mut app.config.quality);
+        *changed |= format_row(ui, s.settings_quality, &["best", "medium", "high"], &mut app.config.quality);
         ui.add_space(10.0);
 
         ui.label(s.settings_max_history);
@@ -255,7 +227,7 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
             .changed()
         {
             app.config.max_history = max as usize;
-            changed = true;
+            *changed = true;
         }
         ui.add_space(10.0);
 
@@ -269,7 +241,7 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
             )
             .changed()
         {
-            changed = true;
+            *changed = true;
         }
         ui.label(
             egui::RichText::new("%(title)s · %(uploader)s")
@@ -287,12 +259,12 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
             )
             .changed()
         {
-            changed = true;
+            *changed = true;
         }
         ui.add_space(10.0);
 
         if ui.checkbox(&mut app.config.subtitles, s.settings_subtitles).changed() {
-            changed = true;
+            *changed = true;
         }
         if app.config.subtitles {
             ui.horizontal(|ui| {
@@ -305,7 +277,7 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
                     )
                     .changed()
                 {
-                    changed = true;
+                    *changed = true;
                 }
             });
         }
@@ -321,7 +293,7 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
             )
             .changed()
         {
-            changed = true;
+            *changed = true;
         }
         ui.add_space(8.0);
 
@@ -329,7 +301,7 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
         let mut frags = app.config.concurrent_fragments;
         if ui.add(egui::Slider::new(&mut frags, 1..=16)).changed() {
             app.config.concurrent_fragments = frags;
-            changed = true;
+            *changed = true;
         }
         ui.add_space(10.0);
 
@@ -337,13 +309,15 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
             .checkbox(&mut app.config.notify_on_complete, s.settings_notify)
             .changed()
         {
-            changed = true;
+            *changed = true;
         }
     });
+}
 
-    ui.add_space(16.0);
-
+fn card_profiles(ui: &mut egui::Ui, app: &mut App, changed: &mut bool) {
+    let pt = app.config.lang == Lang::Pt;
     theme::card_frame().show(ui, |ui| {
+        ui.set_min_width(ui.available_width());
         ui.label(
             egui::RichText::new(if pt { "Perfis de download" } else { "Download profiles" })
                 .color(theme::text_muted())
@@ -380,7 +354,7 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
         }
         if let Some(i) = remove {
             app.config.profiles.remove(i);
-            changed = true;
+            *changed = true;
         }
         ui.add_space(6.0);
         ui.horizontal(|ui| {
@@ -411,16 +385,16 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
             {
                 app.config.profiles.push(app.profile_draft.clone());
                 app.profile_draft.name.clear();
-                changed = true;
+                *changed = true;
             }
         });
     });
+}
 
-    ui.add_space(16.0);
-
-        let ui = &mut cols[right_idx];
-
+fn card_organize(ui: &mut egui::Ui, app: &mut App, changed: &mut bool) {
+    let s = crate::ui::i18n::s(app.config.lang);
     theme::card_frame().show(ui, |ui| {
+        ui.set_min_width(ui.available_width());
         ui.label(s.settings_organize);
         ui.horizontal(|ui| {
             for (val, label) in [
@@ -433,7 +407,7 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
                 let fill = if sel { theme::accent() } else { theme::bg_card() };
                 if ui.add(egui::Button::new(label).fill(fill)).clicked() && !sel {
                     app.config.organize_by = val.to_string();
-                    changed = true;
+                    *changed = true;
                 }
             }
         });
@@ -442,7 +416,7 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
             .checkbox(&mut app.config.copy_to_cloud, s.settings_cloud_copy)
             .changed()
         {
-            changed = true;
+            *changed = true;
         }
         if app.config.copy_to_cloud {
             ui.label(s.settings_cloud);
@@ -455,7 +429,7 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
                     )
                     .changed()
                 {
-                    changed = true;
+                    *changed = true;
                 }
                 if ui
                     .add(egui::Button::new(egui::RichText::new("📁").color(egui::Color32::WHITE)).fill(theme::accent()))
@@ -463,16 +437,18 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
                 {
                     if let Some(p) = rfd::FileDialog::new().pick_folder() {
                         app.config.cloud_folder = p.to_string_lossy().to_string();
-                        changed = true;
+                        *changed = true;
                     }
                 }
             });
         }
     });
+}
 
-    ui.add_space(16.0);
-
+fn card_convert_engine(ui: &mut egui::Ui, app: &mut App, changed: &mut bool) {
+    let pt = app.config.lang == Lang::Pt;
     theme::card_frame().show(ui, |ui| {
+        ui.set_min_width(ui.available_width());
         ui.label(
             egui::RichText::new(if pt {
                 "Motor de conversão de documentos"
@@ -564,7 +540,7 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
                 .min_size(egui::vec2(160.0, 30.0));
                 if ui.add_enabled(available, btn).clicked() && !selected {
                     app.config.convert_engine = eng;
-                    changed = true;
+                    *changed = true;
                 }
                 ui.label(
                     egui::RichText::new(detail)
@@ -589,10 +565,18 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
             }
         }
     });
+}
 
-    ui.add_space(16.0);
+fn card_maintenance(ui: &mut egui::Ui, app: &mut App, changed: &mut bool) {
+    let s = crate::ui::i18n::s(app.config.lang);
+    let pt = app.config.lang == Lang::Pt;
+    let mut do_clear = false;
+    let mut do_archive = false;
+    let mut do_reinstall = false;
+    let mut do_orphans = false;
 
     theme::card_frame().show(ui, |ui| {
+        ui.set_min_width(ui.available_width());
         ui.label(
             egui::RichText::new(s.settings_maintenance)
                 .color(theme::text_muted())
@@ -707,9 +691,8 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
             )
             .changed()
         {
-            changed = true;
+            *changed = true;
         }
-    });
     });
 
     if do_clear {
@@ -739,21 +722,6 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
     }
     if do_orphans {
         app.find_orphans();
-    }
-
-    ui.add_space(16.0);
-    ui.label(
-        egui::RichText::new(format!(
-            "{}: {}",
-            s.settings_saved_at,
-            crate::config::settings::Config::config_path().to_string_lossy()
-        ))
-        .color(theme::text_faint())
-        .size(12.0),
-    );
-
-    if changed {
-        app.config.save();
     }
 }
 

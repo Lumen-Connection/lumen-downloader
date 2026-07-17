@@ -6,15 +6,6 @@ use egui::{Color32, FontId, Rounding, Stroke};
 static LIGHT: AtomicBool = AtomicBool::new(false);
 static HIGH_CONTRAST: AtomicBool = AtomicBool::new(false);
 static COMPACT: AtomicBool = AtomicBool::new(false);
-static GAMEPAD_FOCUS: AtomicBool = AtomicBool::new(false);
-
-pub fn set_gamepad_focus(on: bool) {
-    GAMEPAD_FOCUS.store(on, Ordering::Relaxed);
-}
-
-pub fn is_gamepad_focus() -> bool {
-    GAMEPAD_FOCUS.load(Ordering::Relaxed)
-}
 
 pub fn set_compact(c: bool) {
     COMPACT.store(c, Ordering::Relaxed);
@@ -162,16 +153,6 @@ pub fn apply(ctx: &egui::Context) {
     w.active.fg_stroke = Stroke::new(1.0, text());
     w.active.rounding = Rounding::same(8.0);
 
-    // Com o joystick conectado, reforça o indicador de foco (o widget focado usa
-    // o visual "active"): borda grossa em destaque + leve expansão, para o usuário
-    // enxergar claramente por onde está navegando com o controle.
-    if is_gamepad_focus() {
-        w.active.bg_stroke = Stroke::new(3.0, accent());
-        w.active.expansion = 2.5;
-        w.hovered.bg_stroke = Stroke::new(2.5, accent());
-        w.hovered.expansion = 1.5;
-    }
-
     if is_compact() {
         style.spacing.item_spacing = egui::vec2(7.0, 6.0);
         style.spacing.button_padding = egui::vec2(10.0, 5.0);
@@ -229,12 +210,6 @@ pub fn nav_item(ui: &mut egui::Ui, icon: &str, label: &str, selected: bool) -> b
     };
     ui.painter().rect_filled(rect, Rounding::same(10.0), bg);
 
-    // Indicador de foco (navegação por joystick): contorno em destaque.
-    if focused && is_gamepad_focus() {
-        ui.painter()
-            .rect_stroke(rect, Rounding::same(10.0), Stroke::new(2.5, accent()));
-    }
-
     if selected {
         let bar = egui::Rect::from_min_size(
             egui::pos2(rect.min.x, rect.min.y + 9.0),
@@ -243,7 +218,8 @@ pub fn nav_item(ui: &mut egui::Ui, icon: &str, label: &str, selected: bool) -> b
         ui.painter().rect_filled(bar, Rounding::same(2.0), accent());
     }
 
-    let color = if selected { accent() } else { text() };
+    // A aba ativa mantém a fonte branca (text()) — nunca troca para laranja.
+    let color = text();
     ui.painter().text(
         egui::pos2(rect.min.x + 14.0, rect.center().y),
         egui::Align2::LEFT_CENTER,

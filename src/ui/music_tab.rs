@@ -56,7 +56,6 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
 
     let mut submit = false;
     let mut transcribe = false;
-    let mut thumbnail = false;
     theme::card_frame().show(ui, |ui| {
         ui.label(
             egui::RichText::new(s.music_link)
@@ -100,7 +99,7 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
             if ui
                 .add(
                     egui::Button::new(
-                        egui::RichText::new(s.transcribe).color(theme::accent()).size(14.0),
+                        egui::RichText::new(s.transcribe).color(theme::text()).size(14.0),
                     )
                     .fill(theme::accent_soft())
                     .min_size(egui::vec2(150.0, 36.0)),
@@ -108,9 +107,6 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
                 .clicked()
             {
                 transcribe = true;
-            }
-            if ui.add(theme::ghost_button(s.thumbnail_only)).clicked() {
-                thumbnail = true;
             }
             if ui.add(theme::ghost_button(s.paste_download)).clicked() {
                 if let Some(text) = theme::paste_clipboard() {
@@ -139,14 +135,10 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
         let url = app.music_url.clone();
         app.start_url_transcribe(url, MediaType::Music);
     }
-    if thumbnail {
-        let url = app.music_url.clone();
-        app.start_url_thumbnail(url);
-    }
 
     ui.add_space(20.0);
 
-    let history = app.db.get_history("music", app.config.max_history);
+    let history = app.history_for("music", app.config.max_history);
     crate::ui::history::render(
         app,
         ui,

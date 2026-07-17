@@ -64,6 +64,8 @@ pub struct App {
     pub pending_clear: Option<String>,
     /// Confirmação de exclusão de um item do histórico: (id, título, caminho).
     pub pending_delete: Option<(i64, String, String)>,
+    /// Confirmação de exclusão de uma pasta rastreada: (id, nome, caminho).
+    pub pending_delete_folder: Option<(i64, String, String)>,
     queue_sig: u64,
     pub detached: Vec<Tab>,
     pub wm_preview_video: Option<PathBuf>,
@@ -77,6 +79,7 @@ pub struct App {
     pub cmd_query: String,
     pub restyle: bool,
     pub brand_texture: Option<egui::TextureHandle>,
+    pub connection_texture: Option<egui::TextureHandle>,
     pub gallery_textures: HashMap<PathBuf, egui::TextureHandle>,
     pub thumb_textures: HashMap<String, egui::TextureHandle>,
     thumb_ready: Arc<Mutex<Vec<(String, PathBuf)>>>,
@@ -86,15 +89,16 @@ pub struct App {
     style_set: bool,
     update_checked: bool,
     win_dirty: bool,
-    pub mini: crate::player::MiniPlayer,
-    pub gamepad: crate::gamepad::GamepadNav,
-    pub gamepad_mode: bool,
-    steam_in_game: bool,
-    steam_forced_mode: bool,
-    steam_last_check: std::time::Instant,
-    gp_focus_applied: bool,
     pub live_stop: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
     pub live_started: Option<std::time::Instant>,
+    /// Cache do histórico ativo. Recarregado só quando a época de escrita muda
+    /// (ver crate::db::database::history_epoch), em vez de consultar o SQLite a
+    /// cada frame na thread da UI.
+    history_cache: Vec<crate::db::database::HistoryEntry>,
+    history_cache_epoch: u64,
+    /// Cache das pastas rastreadas, com a mesma estratégia de época.
+    folders_cache: Vec<crate::db::database::FolderEntry>,
+    folders_cache_epoch: u64,
 }
 
 pub struct Toast {
@@ -121,14 +125,28 @@ pub enum Tab {
     Converter,
     Queue,
     Folders,
-    Gallery,
     Games,
     Cloud,
-    Stats,
     Achievements,
     Settings,
     Help,
 }
+
+/// Ordem canônica das abas na barra lateral — fonte única usada pela navegação
+/// por atalho (Ctrl+Tab).
+pub const TAB_ORDER: [Tab; 11] = [
+    Tab::Home,
+    Tab::Music,
+    Tab::Video,
+    Tab::Converter,
+    Tab::Queue,
+    Tab::Folders,
+    Tab::Games,
+    Tab::Cloud,
+    Tab::Achievements,
+    Tab::Settings,
+    Tab::Help,
+];
 
 impl Tab {
     pub fn id(&self) -> &'static str {
@@ -139,10 +157,8 @@ impl Tab {
             Tab::Converter => "converter",
             Tab::Queue => "queue",
             Tab::Folders => "folders",
-            Tab::Gallery => "gallery",
             Tab::Games => "games",
             Tab::Cloud => "cloud",
-            Tab::Stats => "stats",
             Tab::Achievements => "achievements",
             Tab::Settings => "settings",
             Tab::Help => "help",
@@ -155,10 +171,10 @@ impl Tab {
             "converter" => Tab::Converter,
             "queue" => Tab::Queue,
             "folders" => Tab::Folders,
-            "gallery" => Tab::Gallery,
+            "gallery" => Tab::Video,
             "games" => Tab::Games,
             "cloud" => Tab::Cloud,
-            "stats" => Tab::Stats,
+            "stats" => Tab::Settings,
             "achievements" => Tab::Achievements,
             "settings" => Tab::Settings,
             "help" => Tab::Help,
@@ -304,6 +320,7 @@ impl App {
             info_window: Arc::new(Mutex::new(None)),
             qr_window: None,
             brand_texture: None,
+            connection_texture: None,
             pdf_reorder: None,
             tag_editor: None,
             bpm_result: Arc::new(Mutex::new(None)),
@@ -324,6 +341,7 @@ impl App {
             last_download: None,
             pending_clear: None,
             pending_delete: None,
+            pending_delete_folder: None,
             queue_sig: 0,
             detached: Vec::new(),
             wm_preview_video: None,
@@ -345,16 +363,14 @@ impl App {
             style_set: false,
             update_checked: false,
             win_dirty: false,
-            mini: crate::player::MiniPlayer::default(),
-            gamepad: crate::gamepad::GamepadNav::default(),
-            gamepad_mode: false,
-            steam_in_game: false,
-            steam_forced_mode: false,
-            steam_last_check: std::time::Instant::now()
-                - std::time::Duration::from_secs(10),
-            gp_focus_applied: false,
             live_stop: None,
             live_started: None,
+            // u64::MAX força a primeira carga em ambos os caches (nenhuma época
+            // real de escrita chega a esse valor).
+            history_cache: Vec::new(),
+            history_cache_epoch: u64::MAX,
+            folders_cache: Vec::new(),
+            folders_cache_epoch: u64::MAX,
         }
     }
 
@@ -393,66 +409,6 @@ impl App {
                 "Finalizing recording...".to_string()
             });
         }
-    }
-
-    /// Liga/desliga o Modo Games manualmente (botão PS).
-    pub fn toggle_gamepad_mode(&mut self) {
-        self.gamepad_mode = !self.gamepad_mode;
-        if self.gamepad_mode {
-            // Abre focado no Início (atalhos rápidos + baixados recentes).
-            self.active_tab = Tab::Home;
-        }
-        // Toggle manual cancela o controle automático da Steam.
-        self.steam_forced_mode = false;
-    }
-
-    /// Detecta jogo da Steam e liga/desliga o modo controle automaticamente.
-    fn poll_steam_mode(&mut self) {
-        if !self.config.gamepad_enabled {
-            return;
-        }
-        if self.steam_last_check.elapsed() < std::time::Duration::from_secs(3) {
-            return;
-        }
-        self.steam_last_check = std::time::Instant::now();
-        let in_game = crate::gamepad::steam_in_game();
-        if in_game && !self.steam_in_game && !self.gamepad_mode {
-            // Entrou num jogo → liga o Modo Games, focado no Início.
-            self.gamepad_mode = true;
-            self.active_tab = Tab::Home;
-            self.steam_forced_mode = true;
-        } else if !in_game && self.steam_in_game && self.steam_forced_mode {
-            // Saiu do jogo (e o modo tinha sido ligado pela Steam) → volta ao normal.
-            self.gamepad_mode = false;
-            self.steam_forced_mode = false;
-        }
-        self.steam_in_game = in_game;
-    }
-
-    /// Alterna a aba ativa (usado pelos gatilhos do controle).
-    pub fn cycle_tab(&mut self, delta: i32) {
-        const ORDER: [Tab; 13] = [
-            Tab::Home,
-            Tab::Music,
-            Tab::Video,
-            Tab::Converter,
-            Tab::Queue,
-            Tab::Folders,
-            Tab::Gallery,
-            Tab::Games,
-            Tab::Cloud,
-            Tab::Stats,
-            Tab::Achievements,
-            Tab::Settings,
-            Tab::Help,
-        ];
-        let n = ORDER.len() as i32;
-        let idx = ORDER
-            .iter()
-            .position(|t| *t == self.active_tab)
-            .unwrap_or(0) as i32;
-        let ni = (((idx + delta) % n) + n) % n;
-        self.active_tab = ORDER[ni as usize];
     }
 
     pub fn clear_temp_files(&self) -> usize {
@@ -567,38 +523,139 @@ impl App {
         // uma chamada COM do Explorer que pode levar segundos — na thread da UI
         // ela congela o app e impede excluir vários itens em sequência.
         // Preferir a Lixeira do SO (recuperável); só apagar de vez se falhar.
-        let q = self.toast_queue.clone();
+        let (trashed, deleted, failed) = if pt {
+            (
+                "🗑 Item e arquivo enviados para a Lixeira",
+                "🗑 Item e arquivo excluídos",
+                "Removido do histórico, mas não foi possível excluir o arquivo",
+            )
+        } else {
+            (
+                "🗑 Item and file sent to the Recycle Bin",
+                "🗑 Item and file deleted",
+                "Removed from history, but the file could not be deleted",
+            )
+        };
+        Self::spawn_trash_delete(self.toast_queue.clone(), p, false, trashed, deleted, failed);
+    }
+
+    /// Remove uma pasta rastreada e a apaga de fato do disco (vai para a Lixeira
+    /// do sistema, recuperável). Roda em background pelo mesmo motivo do delete
+    /// de histórico: mover uma pasta grande para a Lixeira pode levar segundos.
+    pub fn delete_folder(&mut self, id: i64, path: String) {
+        let pt = self.config.lang == crate::ui::i18n::Lang::Pt;
+        self.db.delete_folder(id);
+        let p = std::path::PathBuf::from(&path);
+        if !p.exists() {
+            self.toast(
+                if pt {
+                    "Removida da lista (pasta não encontrada no disco)"
+                } else {
+                    "Removed from the list (folder not found on disk)"
+                },
+                false,
+            );
+            return;
+        }
+        let (trashed, deleted, failed) = if pt {
+            (
+                "🗑 Pasta enviada para a Lixeira",
+                "🗑 Pasta excluída",
+                "Removida da lista, mas não foi possível excluir a pasta do disco",
+            )
+        } else {
+            (
+                "🗑 Folder sent to the Recycle Bin",
+                "🗑 Folder deleted",
+                "Removed from the list, but the folder could not be deleted from disk",
+            )
+        };
+        Self::spawn_trash_delete(self.toast_queue.clone(), p, true, trashed, deleted, failed);
+    }
+
+    /// Envia `path` para a Lixeira do SO em background (recuperável); se falhar,
+    /// apaga de vez — arquivo ou diretório conforme `is_dir`. Enfileira um toast
+    /// com a mensagem correspondente ao resultado. Roda fora da thread de UI
+    /// (spawn_blocking) porque no Windows a Lixeira é uma chamada COM que pode
+    /// levar segundos e congelaria a interface.
+    fn spawn_trash_delete(
+        toast_queue: Arc<Mutex<Vec<(String, bool)>>>,
+        path: std::path::PathBuf,
+        is_dir: bool,
+        trashed: &'static str,
+        deleted: &'static str,
+        failed: &'static str,
+    ) {
         tokio::task::spawn_blocking(move || {
-            let (msg, err) = if trash::delete(&p).is_ok() {
-                (
-                    if pt {
-                        "🗑 Item e arquivo enviados para a Lixeira"
-                    } else {
-                        "🗑 Item and file sent to the Recycle Bin"
-                    },
-                    false,
-                )
-            } else if std::fs::remove_file(&p).is_ok() {
-                (
-                    if pt {
-                        "🗑 Item e arquivo excluídos"
-                    } else {
-                        "🗑 Item and file deleted"
-                    },
-                    false,
-                )
+            let (msg, err) = if trash::delete(&path).is_ok() {
+                (trashed, false)
             } else {
-                (
-                    if pt {
-                        "Removido do histórico, mas não foi possível excluir o arquivo"
-                    } else {
-                        "Removed from history, but the file could not be deleted"
-                    },
-                    true,
-                )
+                let removed = if is_dir {
+                    std::fs::remove_dir_all(&path).is_ok()
+                } else {
+                    std::fs::remove_file(&path).is_ok()
+                };
+                if removed {
+                    (deleted, false)
+                } else {
+                    (failed, true)
+                }
             };
-            q.lock().unwrap().push((msg.to_string(), err));
+            toast_queue.lock().unwrap().push((msg.to_string(), err));
         });
+    }
+
+    /// Recarrega o cache de histórico se a época de escrita mudou desde a última
+    /// carga — inclui escritas feitas por threads de background (downloads
+    /// concluídos), pois a época é um `static` compartilhado pelo processo.
+    fn ensure_history_cache(&mut self) {
+        let epoch = crate::db::database::history_epoch();
+        if epoch != self.history_cache_epoch {
+            self.history_cache = self.db.all_active_history();
+            self.history_cache_epoch = epoch;
+        }
+    }
+
+    /// Histórico ativo completo (ordenado por data desc), servido do cache.
+    pub fn active_history(&mut self) -> Vec<crate::db::database::HistoryEntry> {
+        self.ensure_history_cache();
+        self.history_cache.clone()
+    }
+
+    /// Histórico ativo de um tipo de mídia, limitado — equivalente a
+    /// `db.get_history(media_type, limit)`, mas servido do cache.
+    pub fn history_for(
+        &mut self,
+        media_type: &str,
+        limit: usize,
+    ) -> Vec<crate::db::database::HistoryEntry> {
+        self.ensure_history_cache();
+        self.history_cache
+            .iter()
+            .filter(|h| h.media_type == media_type)
+            .take(limit)
+            .cloned()
+            .collect()
+    }
+
+    /// Quantidade de itens ativos de um tipo de mídia — equivalente a
+    /// `db.stats(media_type).0`, servido do cache.
+    pub fn history_count(&mut self, media_type: &str) -> i64 {
+        self.ensure_history_cache();
+        self.history_cache
+            .iter()
+            .filter(|h| h.media_type == media_type)
+            .count() as i64
+    }
+
+    /// Pastas rastreadas, servidas do cache (recarrega só quando a época muda).
+    pub fn folders(&mut self) -> Vec<crate::db::database::FolderEntry> {
+        let epoch = crate::db::database::folders_epoch();
+        if epoch != self.folders_cache_epoch {
+            self.folders_cache = self.db.get_folders();
+            self.folders_cache_epoch = epoch;
+        }
+        self.folders_cache.clone()
     }
 
     fn push_toast(&mut self, text: String, error: bool, undo: Option<i64>) {
@@ -1375,25 +1432,7 @@ impl App {
     }
 
     pub fn update(&mut self, ctx: &egui::Context) {
-        // Mantém frames rodando enquanto houver controle conectado, para que o
-        // polling do joystick (em raw_input_hook) funcione mesmo com a UI ociosa —
-        // inclusive na interface padrão (ex.: apertar PS para entrar no Modo Games).
-        if self.config.gamepad_enabled {
-            let ms = if self.gamepad.connected { 40 } else { 800 };
-            ctx.request_repaint_after(std::time::Duration::from_millis(ms));
-        }
-
-        // Reforça o indicador de foco quando o joystick está conectado.
-        let want_gp_focus = self.config.gamepad_enabled && self.gamepad.connected;
-        if want_gp_focus != self.gp_focus_applied {
-            self.gp_focus_applied = want_gp_focus;
-            crate::ui::theme::set_gamepad_focus(want_gp_focus);
-            self.restyle = true;
-        }
-
-        // Modo Games força layout compacto (mais minimalista), sem alterar a
-        // preferência do usuário; ao sair, volta ao valor configurado.
-        let want_compact = self.config.compact_ui || self.gamepad_mode;
+        let want_compact = self.config.compact_ui;
         if crate::ui::theme::is_compact() != want_compact {
             crate::ui::theme::set_compact(want_compact);
             self.restyle = true;
@@ -1568,29 +1607,17 @@ impl App {
             (t && !i.modifiers.shift, t && i.modifiers.shift)
         });
         if cycle_next || cycle_prev {
-            const ORDER: [Tab; 13] = [
-                Tab::Home,
-                Tab::Music,
-                Tab::Video,
-                Tab::Converter,
-                Tab::Queue,
-                Tab::Folders,
-                Tab::Gallery,
-                Tab::Games,
-                Tab::Cloud,
-                Tab::Stats,
-                Tab::Achievements,
-                Tab::Settings,
-                Tab::Help,
-            ];
-            let cur = ORDER.iter().position(|t| *t == self.active_tab).unwrap_or(0);
-            let n = ORDER.len();
+            let cur = TAB_ORDER
+                .iter()
+                .position(|t| *t == self.active_tab)
+                .unwrap_or(0);
+            let n = TAB_ORDER.len();
             let next = if cycle_next {
                 (cur + 1) % n
             } else {
                 (cur + n - 1) % n
             };
-            self.active_tab = ORDER[next];
+            self.active_tab = TAB_ORDER[next];
         }
 
         ctx.input(|i| {
@@ -1671,8 +1698,6 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.mini.poll_finished();
-        self.poll_steam_mode();
         self.update(ctx);
     }
 
@@ -1704,62 +1729,6 @@ impl eframe::App for App {
         }
     }
 
-    fn raw_input_hook(&mut self, ctx: &egui::Context, raw_input: &mut egui::RawInput) {
-        if !self.config.gamepad_enabled {
-            return;
-        }
-        // Mantém o polling do controle ativo mesmo com a UI ociosa.
-        ctx.request_repaint_after(std::time::Duration::from_millis(60));
-
-        use crate::gamepad::NavAction;
-        for action in self.gamepad.poll() {
-            match action {
-                NavAction::FocusNext => push_key(raw_input, egui::Key::Tab, false),
-                NavAction::FocusPrev => push_key(raw_input, egui::Key::Tab, true),
-                NavAction::ArrowLeft => push_key(raw_input, egui::Key::ArrowLeft, false),
-                NavAction::ArrowRight => push_key(raw_input, egui::Key::ArrowRight, false),
-                NavAction::Activate => {
-                    push_key(raw_input, egui::Key::Enter, false);
-                    push_key(raw_input, egui::Key::Space, false);
-                }
-                NavAction::Back => push_key(raw_input, egui::Key::Escape, false),
-                NavAction::NextTab => self.cycle_tab(1),
-                NavAction::PrevTab => self.cycle_tab(-1),
-                NavAction::PlayPause => {
-                    if self.mini.is_active() {
-                        self.mini.toggle();
-                    }
-                }
-                NavAction::Stop => self.mini.stop(),
-                NavAction::Palette => {
-                    self.cmd_palette_open = true;
-                    self.cmd_query.clear();
-                }
-                NavAction::ToggleMode => self.toggle_gamepad_mode(),
-            }
-        }
-    }
-}
-
-fn push_key(raw: &mut egui::RawInput, key: egui::Key, shift: bool) {
-    let modifiers = egui::Modifiers {
-        shift,
-        ..Default::default()
-    };
-    raw.events.push(egui::Event::Key {
-        key,
-        physical_key: None,
-        pressed: true,
-        repeat: false,
-        modifiers,
-    });
-    raw.events.push(egui::Event::Key {
-        key,
-        physical_key: None,
-        pressed: false,
-        repeat: false,
-        modifiers,
-    });
 }
 
 pub fn make_qr_texture(ctx: &egui::Context, data: &str) -> Option<egui::TextureHandle> {
@@ -1792,11 +1761,21 @@ pub fn make_qr_texture(ctx: &egui::Context, data: &str) -> Option<egui::TextureH
 }
 
 pub fn load_brand_texture(ctx: &egui::Context) -> Option<egui::TextureHandle> {
-    let bytes = include_bytes!("../assets/FULL LOGO LUMEN DOWLOADER PNG.png");
+    // Transparente: sobreposto ao fundo do app (sidebar/onboarding).
+    let bytes = include_bytes!("../assets/LogoOficialLumenStreamTransparente2.png");
     let img = image::load_from_memory(bytes).ok()?.to_rgba8();
     let (w, h) = img.dimensions();
     let color = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &img);
     Some(ctx.load_texture("brand_logo", color, egui::TextureOptions::LINEAR))
+}
+
+pub fn load_connection_texture(ctx: &egui::Context) -> Option<egui::TextureHandle> {
+    // Logo do estúdio, usada no crédito "Lumen Connection" da barra lateral.
+    let bytes = include_bytes!("../assets/LUMEN CONNECTION.png");
+    let img = image::load_from_memory(bytes).ok()?.to_rgba8();
+    let (w, h) = img.dimensions();
+    let color = egui::ColorImage::from_rgba_unmultiplied([w as usize, h as usize], &img);
+    Some(ctx.load_texture("lumen_connection_logo", color, egui::TextureOptions::LINEAR))
 }
 
 pub fn load_texture_from_file(

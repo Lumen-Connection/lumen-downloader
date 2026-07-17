@@ -42,9 +42,10 @@ fn render_game_grid(app: &mut App, ui: &mut egui::Ui, pt: bool) {
                         .size(18.0)
                         .strong(),
                 );
-                let dir = games::gtav_user_music_dir();
-                let exists = dir.as_ref().map(|d| d.exists()).unwrap_or(false);
-                let path_txt = dir
+                let dirs = games::gtav_user_music_dirs();
+                let exists = dirs.iter().any(|d| d.exists());
+                let path_txt = dirs
+                    .first()
                     .map(|d| d.to_string_lossy().to_string())
                     .unwrap_or_else(|| "—".to_string());
                 ui.label(
@@ -86,7 +87,7 @@ fn render_gtav(app: &mut App, ui: &mut egui::Ui, pt: bool) {
     }
     ui.add_space(8.0);
 
-    let history = app.db.get_history("music", app.config.max_history);
+    let history = app.history_for("music", app.config.max_history);
 
     if history.is_empty() {
         theme::card_frame().show(ui, |ui| {
@@ -162,11 +163,16 @@ fn render_gtav(app: &mut App, ui: &mut egui::Ui, pt: bool) {
         );
         ui.label(
             egui::RichText::new(if pt {
-                "No GTA V, vá em Configurações → Áudio e clique em \"Buscar Músicas do Usuário\" \
-                 para o rádio reconhecer as faixas. Depois, escolha a estação \"Independence FM\"."
+                "No GTA V, vá em Configurações → Áudio e clique em \"Realizar busca completa por \
+                 música\" para o rádio indexar as faixas. Depois, sintonize a estação \"Self Radio\" \
+                 na roda de rádios (nas Configurações de Áudio ela pode aparecer como \"Media \
+                 Player\"). Só toca MP3/M4A/AAC/WMA — formatos como OPUS são convertidos para MP3 \
+                 automaticamente na sincronização."
             } else {
-                "In GTA V, open Settings → Audio and click \"Scan User Music\" so the radio picks \
-                 up the tracks. Then tune in to the \"Independence FM\" station."
+                "In GTA V, open Settings → Audio and click \"Perform full music scan\" so the radio \
+                 indexes the tracks. Then tune in to the \"Self Radio\" station in the radio wheel \
+                 (in the Audio settings it may show as \"Media Player\"). It only plays \
+                 MP3/M4A/AAC/WMA — formats like OPUS are converted to MP3 automatically on sync."
             })
             .color(theme::text_muted())
             .size(11.0),
@@ -203,7 +209,8 @@ fn render_gtav(app: &mut App, ui: &mut egui::Ui, pt: bool) {
 fn sync_gtav_flow(app: &mut App, files: Vec<std::path::PathBuf>) {
     let pt = app.config.lang == Lang::Pt;
 
-    let Some(dest) = games::gtav_user_music_dir() else {
+    let dests = games::gtav_user_music_dirs();
+    if dests.is_empty() {
         app.toast(
             if pt {
                 "Não foi possível localizar a pasta de Documentos."
@@ -213,17 +220,19 @@ fn sync_gtav_flow(app: &mut App, files: Vec<std::path::PathBuf>) {
             true,
         );
         return;
-    };
-    if let Err(e) = std::fs::create_dir_all(&dest) {
-        app.toast(
-            if pt {
-                format!("Falha ao criar a pasta do GTA V: {}", e)
-            } else {
-                format!("Failed to create GTA V folder: {}", e)
-            },
-            true,
-        );
-        return;
+    }
+    for d in &dests {
+        if let Err(e) = std::fs::create_dir_all(d) {
+            app.toast(
+                if pt {
+                    format!("Falha ao criar a pasta do GTA V: {}", e)
+                } else {
+                    format!("Failed to create GTA V folder: {}", e)
+                },
+                true,
+            );
+            return;
+        }
     }
 
     let engine = app.engine.clone();
@@ -274,36 +283,44 @@ fn sync_gtav_flow(app: &mut App, files: Vec<std::path::PathBuf>) {
                 .map(|s| s.to_string_lossy().to_string())
                 .unwrap_or_else(|| "musica".to_string());
 
-            if games::is_gtav_supported(file) {
-                let name = file
-                    .file_name()
+            let supported = games::is_gtav_supported(file);
+            let out_name: std::ffi::OsString = if supported {
+                file.file_name()
                     .map(|n| n.to_os_string())
-                    .unwrap_or_else(|| format!("{}.mp3", stem).into());
-                let out = dest.join(name);
-                if std::fs::copy(file, &out).is_ok() {
-                    copied += 1;
-                    last_written = out.to_string_lossy().to_string();
-                } else {
-                    failed += 1;
-                }
+                    .unwrap_or_else(|| format!("{}.mp3", stem).into())
             } else {
-                let out = dest.join(format!("{}.mp3", stem));
-                match eng
-                    .convert_file(
-                        &file.to_string_lossy(),
-                        &out.to_string_lossy(),
-                        "mp3",
-                        "",
-                        convert_engine,
-                    )
-                    .await
-                {
-                    Ok(p) => {
+                std::ffi::OsString::from(format!("{}.mp3", stem))
+            };
+            // Produz o arquivo na primeira pasta (copia se já é suportado, senão
+            // converte p/ MP3) e replica o resultado nas demais edições instaladas
+            // — convertendo apenas uma vez.
+            let first_out = dests[0].join(&out_name);
+            let produced: Option<std::path::PathBuf> = if supported {
+                std::fs::copy(file, &first_out).ok().map(|_| first_out.clone())
+            } else {
+                eng.convert_file(
+                    &file.to_string_lossy(),
+                    &first_out.to_string_lossy(),
+                    "mp3",
+                    "",
+                    convert_engine,
+                )
+                .await
+                .ok()
+            };
+            match produced {
+                Some(p) => {
+                    if supported {
+                        copied += 1;
+                    } else {
                         converted += 1;
-                        last_written = p.to_string_lossy().to_string();
                     }
-                    Err(_) => failed += 1,
+                    for d in &dests[1..] {
+                        let _ = std::fs::copy(&p, d.join(&out_name));
+                    }
+                    last_written = p.to_string_lossy().to_string();
                 }
+                None => failed += 1,
             }
         }
 

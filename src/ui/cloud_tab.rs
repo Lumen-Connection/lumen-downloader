@@ -26,6 +26,7 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
     let mut changed = false;
 
     theme::card_frame().show(ui, |ui| {
+        ui.set_min_width(ui.available_width());
         let mut enabled = app.config.copy_to_cloud;
         if ui
             .checkbox(
@@ -57,9 +58,9 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
                     egui::TextEdit::singleline(&mut path)
                         .desired_width(ui.available_width() - 130.0)
                         .hint_text(if pt {
-                            "Ex.: C:\\Users\\você\\Google Drive\\Lumen"
+                            "Ex.: G:\\Meu Drive\\Lumen"
                         } else {
-                            "e.g. C:\\Users\\you\\Google Drive\\Lumen"
+                            "e.g. G:\\My Drive\\Lumen"
                         })
                         .text_color(theme::text()),
                 )
@@ -82,6 +83,7 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
 
     ui.add_space(12.0);
     theme::card_frame().show(ui, |ui| {
+        ui.set_min_width(ui.available_width());
         ui.label(
             egui::RichText::new(if pt { "Como funciona" } else { "How it works" })
                 .color(theme::text())
@@ -102,6 +104,57 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
             .color(theme::text_muted())
             .size(12.0),
         );
+
+        ui.add_space(10.0);
+        ui.label(
+            egui::RichText::new(if pt {
+                "Onde fica a pasta de cada serviço:"
+            } else {
+                "Where each service's folder lives:"
+            })
+            .color(theme::text_muted())
+            .size(12.0)
+            .strong(),
+        );
+        ui.add_space(4.0);
+
+        let bullet = |ui: &mut egui::Ui, name: &str, desc: &str| {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.x = 4.0;
+                ui.label(
+                    egui::RichText::new(format!("• {}", name))
+                        .color(theme::text())
+                        .size(12.0)
+                        .strong(),
+                );
+                ui.label(
+                    egui::RichText::new(format!("— {}", desc))
+                        .color(theme::text_muted())
+                        .size(12.0),
+                );
+            });
+            ui.add_space(3.0);
+        };
+
+        if pt {
+            bullet(
+                ui,
+                "Google Drive",
+                "instale o «Google Drive para computador»; sua pasta passa a existir no disco \
+                 G:\\Meu Drive\\… (confira a letra no Explorer).",
+            );
+            bullet(ui, "OneDrive", "já vem no Windows; use C:\\Users\\você\\OneDrive\\…");
+            bullet(ui, "Dropbox", "instale o app do Dropbox; use C:\\Users\\você\\Dropbox\\…");
+        } else {
+            bullet(
+                ui,
+                "Google Drive",
+                "install “Google Drive for desktop”; your folder shows up on drive \
+                 G:\\My Drive\\… (check the letter in Explorer).",
+            );
+            bullet(ui, "OneDrive", "built into Windows; use C:\\Users\\you\\OneDrive\\…");
+            bullet(ui, "Dropbox", "install the Dropbox app; use C:\\Users\\you\\Dropbox\\…");
+        }
     });
 
     if app.config.copy_to_cloud && app.config.cloud_folder.trim().is_empty() {

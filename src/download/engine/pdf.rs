@@ -299,7 +299,7 @@ impl DownloadEngine {
                 let hmm = Mm(h as f32 / dpi * 25.4);
                 if pdoc.is_none() {
                     let (d, pg, layer) =
-                        printpdf::PdfDocument::new("Lumen Converter", wmm, hmm, "1");
+                        printpdf::PdfDocument::new("Converter", wmm, hmm, "1");
                     let lr = d.get_page(pg).get_layer(layer);
                     printpdf::Image::from(xobj).add_to_layer(
                         lr,
@@ -358,7 +358,7 @@ impl DownloadEngine {
             let height_mm = Mm(height as f32 / dpi * 25.4);
 
             let (doc, page, layer) =
-                PdfDocument::new("Lumen Converter", width_mm, height_mm, "Imagem");
+                PdfDocument::new("Converter", width_mm, height_mm, "Imagem");
             let layer_ref = doc.get_page(page).get_layer(layer);
             Image::from(xobject).add_to_layer(
                 layer_ref,
@@ -415,7 +415,7 @@ impl DownloadEngine {
 
             let (first_xobj, fw, fh) = make_xobject(&inputs[0])?;
             let (doc, page, layer) = PdfDocument::new(
-                "Lumen Converter",
+                "Converter",
                 Mm(fw as f32 / dpi * 25.4),
                 Mm(fh as f32 / dpi * 25.4),
                 "Imagem 1",

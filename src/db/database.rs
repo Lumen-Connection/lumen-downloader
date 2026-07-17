@@ -1,8 +1,34 @@
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use chrono::Local;
 use rusqlite::{params, Connection};
+
+// Época global de escrita. Toda instância de `Database` — inclusive as abertas em
+// threads de background para gravar downloads concluídos — incrementa estes
+// contadores ao mutar os dados. A UI compara a época contra a do seu cache para
+// saber quando recarregar, em vez de consultar o SQLite a cada frame. Como o
+// processo é único, o `static` é compartilhado por todos os escritores, então a
+// invalidação nunca é esquecida: ela mora no caminho de escrita, não nas chamadas.
+//
+// INVARIANTE: o incremento vem SEMPRE DEPOIS de a escrita ter sido executada.
+// Incrementar antes abre uma janela em que o leitor (a UI repinta durante o
+// download) observa a época nova, recarrega o cache sem a linha que ainda não foi
+// gravada e memoriza a época nova — e então nunca mais recarrega, porque ninguém
+// incrementa de novo. O sintoma é o histórico só aparecer no download seguinte.
+static HISTORY_EPOCH: AtomicU64 = AtomicU64::new(0);
+static FOLDERS_EPOCH: AtomicU64 = AtomicU64::new(0);
+
+/// Época atual das escritas de histórico (muda a cada mutação de histórico).
+pub fn history_epoch() -> u64 {
+    HISTORY_EPOCH.load(Ordering::Relaxed)
+}
+
+/// Época atual das escritas de pastas (muda a cada mutação de pastas rastreadas).
+pub fn folders_epoch() -> u64 {
+    FOLDERS_EPOCH.load(Ordering::Relaxed)
+}
 
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
@@ -101,10 +127,7 @@ impl Database {
                 params![url, title, media_type, format, quality, file_path, folder_path, file_size, now],
             )
             .ok();
-    }
-
-    pub fn get_history(&self, media_type: &str, limit: usize) -> Vec<HistoryEntry> {
-        self.query_history(media_type, limit, 0)
+        HISTORY_EPOCH.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn get_deleted_history(&self, media_type: &str, limit: usize) -> Vec<HistoryEntry> {
@@ -147,24 +170,28 @@ impl Database {
                 params![id],
             )
             .ok();
+        HISTORY_EPOCH.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn set_tags(&self, id: i64, tags: &str) {
         self.conn
             .execute("UPDATE history SET tags = ?1 WHERE id = ?2", params![tags, id])
             .ok();
+        HISTORY_EPOCH.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn delete_history(&self, id: i64) {
         self.conn
             .execute("UPDATE history SET deleted = 1 WHERE id = ?1", params![id])
             .ok();
+        HISTORY_EPOCH.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn restore_history(&self, id: i64) {
         self.conn
             .execute("UPDATE history SET deleted = 0 WHERE id = ?1", params![id])
             .ok();
+        HISTORY_EPOCH.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn clear_history(&self, media_type: &str) {
@@ -174,6 +201,7 @@ impl Database {
                 params![media_type],
             )
             .ok();
+        HISTORY_EPOCH.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn empty_trash(&self, media_type: &str) {
@@ -183,6 +211,7 @@ impl Database {
                 params![media_type],
             )
             .ok();
+        HISTORY_EPOCH.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn url_exists(&self, url: &str) -> bool {
@@ -205,17 +234,7 @@ impl Database {
                 params![format!("-{} days", days)],
             )
             .ok();
-    }
-
-    pub fn stats(&self, media_type: &str) -> (i64, i64) {
-        self.conn
-            .query_row(
-                "SELECT COUNT(*), COALESCE(SUM(file_size), 0) FROM history
-                 WHERE media_type = ?1 AND deleted = 0",
-                params![media_type],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .unwrap_or((0, 0))
+        HISTORY_EPOCH.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Reescreve o prefixo de caminho em todo o histórico (usado ao renomear a
@@ -228,6 +247,7 @@ impl Database {
                 params![old, new],
             )
             .ok();
+        HISTORY_EPOCH.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn update_file_path(&self, id: i64, new_path: &str) {
@@ -237,6 +257,7 @@ impl Database {
                 params![new_path, id],
             )
             .ok();
+        HISTORY_EPOCH.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn all_active_history(&self) -> Vec<HistoryEntry> {
@@ -276,12 +297,14 @@ impl Database {
                 params![name, path, now],
             )
             .ok();
+        FOLDERS_EPOCH.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn delete_folder(&self, id: i64) {
         self.conn
             .execute("DELETE FROM folders WHERE id = ?1", params![id])
             .ok();
+        FOLDERS_EPOCH.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn rename_folder(&self, id: i64, name: &str) {
@@ -291,6 +314,7 @@ impl Database {
                 params![name, id],
             )
             .ok();
+        FOLDERS_EPOCH.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn get_folders(&self) -> Vec<FolderEntry> {
@@ -330,5 +354,110 @@ impl Database {
                 params![key, value],
             )
             .ok();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    // Cada teste usa um arquivo próprio (dados isolados). A época é um `static`
+    // global compartilhado pelo processo, então as asserções sobre ela são
+    // sempre monotônicas (`>` / `!=`) para não dependerem da ordem dos testes.
+    fn temp_db_path(tag: &str) -> PathBuf {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let mut p = std::env::temp_dir();
+        p.push(format!("lumen_stream_test_{tag}_{nanos}.sqlite"));
+        p
+    }
+
+    #[test]
+    fn history_write_bumps_epoch_and_is_queryable() {
+        let path = temp_db_path("hist");
+        let db = Database::open(&path);
+        let before = history_epoch();
+        db.add_history("u", "Song", "music", "mp3", "best", "C:/x", "C:/x/s.mp3", Some(123));
+        assert!(history_epoch() > before, "add_history deve incrementar a época de histórico");
+        let all = db.all_active_history();
+        assert!(
+            all.iter().any(|h| h.title == "Song" && h.media_type == "music"),
+            "o item gravado deve aparecer no histórico ativo"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn soft_delete_excludes_from_active_and_bumps_epoch() {
+        let path = temp_db_path("del");
+        let db = Database::open(&path);
+        db.add_history("u", "Temp", "video", "mp4", "best", "C:/x", "C:/x/t.mp4", None);
+        let id = db
+            .all_active_history()
+            .iter()
+            .find(|h| h.title == "Temp")
+            .expect("item recém-gravado deve existir")
+            .id;
+        let before = history_epoch();
+        db.delete_history(id);
+        assert!(history_epoch() > before, "delete_history deve incrementar a época");
+        assert!(
+            !db.all_active_history().iter().any(|h| h.id == id),
+            "item deletado sai do conjunto ativo"
+        );
+        assert!(
+            db.get_deleted_history("video", 100).iter().any(|h| h.id == id),
+            "item deletado vai para a lixeira (recuperável)"
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn folder_write_bumps_folders_epoch() {
+        let path = temp_db_path("fold");
+        let db = Database::open(&path);
+        let before = folders_epoch();
+        db.add_folder("Downloads", "C:/Downloads");
+        assert!(folders_epoch() > before, "add_folder deve incrementar a época de pastas");
+        assert!(db.get_folders().iter().any(|f| f.path == "C:/Downloads"));
+        let before_del = folders_epoch();
+        let id = db.get_folders().iter().find(|f| f.path == "C:/Downloads").unwrap().id;
+        db.delete_folder(id);
+        assert!(folders_epoch() > before_del, "delete_folder deve incrementar a época");
+        assert!(!db.get_folders().iter().any(|f| f.path == "C:/Downloads"));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    // Propriedade crítica para o cache da UI: uma escrita feita por OUTRA instância
+    // de `Database` (uma thread de background gravando um download concluído) muda a
+    // época global compartilhada, então a UI sabe que precisa recarregar — e ao
+    // recarregar, enxerga o novo item. Sem isso, downloads concluídos só apareceriam
+    // após outra mutação (regressão que o mecanismo de época previne).
+    #[test]
+    fn background_writer_invalidates_via_shared_epoch() {
+        let path = temp_db_path("shared");
+        let ui_db = Database::open(&path);
+        let cached_epoch = history_epoch(); // a "UI" memoriza a época ao carregar
+        let _snapshot = ui_db.all_active_history();
+
+        // Segunda instância no MESMO arquivo, como uma thread de background faria.
+        let bg_db = Database::open(&path);
+        bg_db.add_history("u", "FromBackground", "music", "mp3", "best", "C:/x", "C:/x/b.mp3", None);
+
+        assert!(
+            history_epoch() != cached_epoch,
+            "a escrita da instância de background deve mudar a época global"
+        );
+        assert!(
+            ui_db
+                .all_active_history()
+                .iter()
+                .any(|h| h.title == "FromBackground"),
+            "ao recarregar, a instância da UI enxerga a escrita da instância de background"
+        );
+        let _ = std::fs::remove_file(&path);
     }
 }

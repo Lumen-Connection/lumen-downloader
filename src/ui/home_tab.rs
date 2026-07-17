@@ -113,6 +113,48 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
         }
     }
 
+    ui.add_space(18.0);
+    // Recomendação do recurso "Sincronizar Jogos".
+    let mut go_games = false;
+    theme::card_frame().show(ui, |ui| {
+        ui.set_min_width(ui.available_width());
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("🎮").size(22.0));
+            ui.label(
+                egui::RichText::new(if pt { "Sincronizar Jogos" } else { "Sync to Games" })
+                    .color(theme::text())
+                    .size(15.0)
+                    .strong(),
+            );
+        });
+        ui.add_space(4.0);
+        ui.label(
+            egui::RichText::new(if pt {
+                "Envie suas músicas baixadas para o rádio personalizado do jogo e \
+                 ouça suas faixas favoritas enquanto joga (ex.: GTA V)."
+            } else {
+                "Send your downloaded songs to the game's custom radio and listen \
+                 to your favorite tracks while you play (e.g. GTA V)."
+            })
+            .color(theme::text_muted())
+            .size(12.0),
+        );
+        ui.add_space(8.0);
+        if ui
+            .add(theme::accent_button(if pt {
+                "🎮 Abrir Sincronizar Jogos"
+            } else {
+                "🎮 Open Sync to Games"
+            }))
+            .clicked()
+        {
+            go_games = true;
+        }
+    });
+    if go_games {
+        app.active_tab = Tab::Games;
+    }
+
     ui.add_space(20.0);
 
     ui.label(
@@ -125,7 +167,7 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
 
     let mut recents: Vec<HistoryEntry> = Vec::new();
     for mt in ["music", "video", "convert"] {
-        recents.extend(app.db.get_history(mt, 10));
+        recents.extend(app.history_for(mt, 10));
     }
     recents.sort_by(|a, b| b.created_at.cmp(&a.created_at));
     recents.truncate(8);
@@ -140,15 +182,13 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
     render_recents(ui, &recents);
 }
 
-const CATALOG: [&str; 8] = [
+const CATALOG: [&str; 6] = [
     "music",
     "video",
     "transcribe",
     "converter",
     "queue",
-    "gallery",
     "folders",
-    "stats",
 ];
 
 fn card_info(id: &str, s: &crate::ui::i18n::Strings) -> Option<(String, Tab)> {
@@ -158,9 +198,7 @@ fn card_info(id: &str, s: &crate::ui::i18n::Strings) -> Option<(String, Tab)> {
         "transcribe" => (s.transcribe.to_string(), Tab::Video),
         "converter" => (format!("🔄  {}", s.nav_converter), Tab::Converter),
         "queue" => (format!("📋  {}", s.nav_queue), Tab::Queue),
-        "gallery" => (format!("🖼  {}", s.nav_gallery), Tab::Gallery),
         "folders" => (format!("📁  {}", s.nav_folders), Tab::Folders),
-        "stats" => (format!("📊  {}", s.nav_stats), Tab::Stats),
         _ => return None,
     })
 }

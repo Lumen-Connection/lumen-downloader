@@ -1,7 +1,7 @@
 use crate::app::{App, MediaType};
 use crate::ui::theme;
 
-pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
+pub fn render(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui) {
     let s = crate::ui::i18n::s(app.config.lang);
 
     ui.label(
@@ -92,7 +92,7 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
             if ui
                 .add(
                     egui::Button::new(
-                        egui::RichText::new(s.transcribe).color(theme::accent()).size(14.0),
+                        egui::RichText::new(s.transcribe).color(theme::text()).size(14.0),
                     )
                     .fill(theme::accent_soft())
                     .min_size(egui::vec2(150.0, 36.0)),
@@ -145,7 +145,7 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
 
     ui.add_space(20.0);
 
-    let history = app.db.get_history("video", app.config.max_history);
+    let history = app.history_for("video", app.config.max_history);
     crate::ui::history::render(
         app,
         ui,
@@ -155,4 +155,7 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
         &history,
         Some(MediaType::Video),
     );
+
+    // Imagens da pasta de download (antiga aba "Galeria"), abaixo do histórico.
+    crate::ui::gallery_tab::render_images(app, ctx, ui);
 }

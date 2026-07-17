@@ -32,7 +32,7 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
             ("Como baixar de uma playlist?",
              "Cole o link da playlist na aba Fila e escolha o tipo (Música/Vídeo). A fila expande em todos os itens."),
             ("Como transcrever um vídeo?",
-             "Use o botão Transcrever nas abas Vídeo/Música, ou no Lumen Converter para um arquivo local. Na 1ª vez o Whisper é baixado (~150 MB)."),
+             "Use o botão Transcrever nas abas Vídeo/Música, ou no Converter para um arquivo local. Na 1ª vez o Whisper é baixado (~150 MB)."),
             ("Onde ficam os arquivos?",
              "Na pasta de download padrão (defina em Configurações ou na aba Pastas). Cada item do histórico tem \"abrir arquivo/pasta\"."),
             ("Funciona offline?",
@@ -47,7 +47,7 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
             ("How do I download a playlist?",
              "Paste the playlist link in the Queue tab and pick the type (Music/Video). The queue expands into all items."),
             ("How do I transcribe a video?",
-             "Use the Transcribe button in the Video/Music tabs, or in Lumen Converter for a local file. Whisper is downloaded on first use (~150 MB)."),
+             "Use the Transcribe button in the Video/Music tabs, or in Converter for a local file. Whisper is downloaded on first use (~150 MB)."),
             ("Where are the files?",
              "In the default download folder (set in Settings or the Folders tab). Each history item has open file/folder."),
             ("Does it work offline?",
@@ -56,6 +56,7 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
     };
 
     theme::card_frame().show(ui, |ui| {
+        ui.set_min_width(ui.available_width());
         ui.label(
             egui::RichText::new("FAQ")
                 .color(theme::text_muted())
@@ -75,6 +76,7 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
     ui.add_space(16.0);
 
     theme::card_frame().show(ui, |ui| {
+        ui.set_min_width(ui.available_width());
         ui.label(
             egui::RichText::new(if pt { "Atalhos de teclado" } else { "Keyboard shortcuts" })
                 .color(theme::text_muted())
@@ -110,6 +112,7 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
     let deps = app.deps_status.lock().unwrap().clone();
     let mut do_refresh = false;
     theme::card_frame().show(ui, |ui| {
+        ui.set_min_width(ui.available_width());
         ui.horizontal(|ui| {
             ui.label(
                 egui::RichText::new(if pt { "Dependências" } else { "Dependencies" })
@@ -153,6 +156,7 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
     let mut suggest = false;
     let mut meta = false;
     theme::card_frame().show(ui, |ui| {
+        ui.set_min_width(ui.available_width());
         ui.label(
             egui::RichText::new(if pt { "Suporte" } else { "Support" })
                 .color(theme::text_muted())
@@ -238,7 +242,7 @@ fn open_new_issue(app: &mut App, pt: bool, label: &str, title: &str, body: &str)
     theme::set_clipboard(&format!("{}\n\n{}", title, body));
 
     let url = format!(
-        "https://github.com/Lumen-Connection/lumen-downloader/issues/new?labels={}&title={}&body={}",
+        "https://github.com/Lumen-Connection/lumen-stream/issues/new?labels={}&title={}&body={}",
         percent_encode(label),
         percent_encode(title),
         percent_encode(body),

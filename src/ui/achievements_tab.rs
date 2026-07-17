@@ -137,9 +137,9 @@ pub fn render(app: &mut App, _ctx: &egui::Context, ui: &mut egui::Ui) {
     let s = crate::ui::i18n::s(app.config.lang);
     let pt = app.config.lang == Lang::Pt;
 
-    let (mc, _) = app.db.stats("music");
-    let (vc, _) = app.db.stats("video");
-    let (cc, _) = app.db.stats("convert");
+    let mc = app.history_count("music");
+    let vc = app.history_count("video");
+    let cc = app.history_count("convert");
     let total = mc + vc + cc;
 
     ui.label(

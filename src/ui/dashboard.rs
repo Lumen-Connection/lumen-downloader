@@ -4,17 +4,7 @@ use crate::app::{App, DownloadPhase, MediaType, Tab};
 use crate::ui::theme;
 
 pub fn render(app: &mut App, ctx: &egui::Context) {
-    // Modo Games: interface própria (compacta, minimalista, focada no Início com
-    // atalhos rápidos), mantendo acesso a todos os recursos. Sem a barra lateral.
-    if app.gamepad_mode {
-        render_mini_player(app, ctx);
-        crate::ui::gamepad_mode::render(app, ctx);
-        render_overlays(app, ctx);
-        return;
-    }
-
     render_sidebar(app, ctx);
-    render_mini_player(app, ctx);
 
     egui::CentralPanel::default()
         .frame(
@@ -59,6 +49,7 @@ fn render_overlays(app: &mut App, ctx: &egui::Context) {
     render_tags_dialog(app, ctx);
     render_confirm_clear(app, ctx);
     render_confirm_delete(app, ctx);
+    render_confirm_delete_folder(app, ctx);
     render_orphans(app, ctx);
     render_onboarding(app, ctx);
     render_detached(app, ctx);
@@ -69,6 +60,20 @@ fn render_onboarding(app: &mut App, ctx: &egui::Context) {
         return;
     }
     let pt = app.config.lang == crate::ui::i18n::Lang::Pt;
+
+    // Cortina: o idioma é definido antes de usar o app, então a UI atrás não
+    // responde a clique. Fica na mesma Order da janela, mas é registrada antes —
+    // logo, abaixo dela.
+    let screen = ctx.screen_rect();
+    egui::Area::new(egui::Id::new("onboarding_scrim"))
+        .order(egui::Order::Middle)
+        .fixed_pos(screen.min)
+        .show(ctx, |ui| {
+            let (rect, _) = ui.allocate_exact_size(screen.size(), egui::Sense::click_and_drag());
+            ui.painter()
+                .rect_filled(rect, egui::Rounding::ZERO, Color32::from_black_alpha(190));
+        });
+
     egui::Window::new(if pt { "Bem-vindo ao Lumen Stream" } else { "Welcome to Lumen Stream" })
         .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
         .collapsible(false)
@@ -80,13 +85,52 @@ fn render_onboarding(app: &mut App, ctx: &egui::Context) {
             }
             if let Some(tex) = &app.brand_texture {
                 let [tw, th] = tex.size();
-                let w = 360.0_f32;
-                let h = w * th as f32 / tw.max(1) as f32;
+                // Emblema quadrado: limita pela altura para não virar um bloco gigante.
+                let h = 160.0_f32;
+                let w = h * tw as f32 / th.max(1) as f32;
                 ui.vertical_centered(|ui| {
                     ui.add(egui::Image::from_texture((tex.id(), egui::vec2(w, h))));
                 });
                 ui.add_space(10.0);
             }
+
+            // Primeira decisão do onboarding: o idioma. O resto do modal já
+            // responde no idioma escolhido no frame seguinte ao clique.
+            ui.label(
+                egui::RichText::new("Idioma / Language")
+                    .color(theme::text_muted())
+                    .size(11.0)
+                    .strong(),
+            );
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                for (lang, label) in [
+                    (crate::ui::i18n::Lang::Pt, "Português"),
+                    (crate::ui::i18n::Lang::En, "English"),
+                ] {
+                    let selected = app.config.lang == lang;
+                    let fill = if selected { theme::accent() } else { theme::bg_card() };
+                    let txt = egui::RichText::new(label).size(14.0).color(if selected {
+                        Color32::WHITE
+                    } else {
+                        theme::text()
+                    });
+                    if ui
+                        .add(
+                            egui::Button::new(txt)
+                                .fill(fill)
+                                .min_size(egui::vec2(150.0, 36.0)),
+                        )
+                        .clicked()
+                        && !selected
+                    {
+                        app.config.lang = lang;
+                        app.config.save();
+                    }
+                }
+            });
+            ui.add_space(14.0);
+
             ui.label(
                 egui::RichText::new(if pt {
                     "Baixe vídeos e músicas de centenas de sites, converta arquivos e muito mais."
@@ -101,7 +145,7 @@ fn render_onboarding(app: &mut App, ctx: &egui::Context) {
                 &[
                     "Cole um link em Baixar Vídeo/Música e clique em Download.",
                     "Use a Fila para vários links ou playlists.",
-                    "Lumen Converter: formatos, PDF, marca d'água e transcrição.",
+                    "Converter: formatos, PDF, marca d'água e transcrição.",
                     "Ctrl+K abre a paleta de comandos; F11 = tela cheia.",
                     "Tudo offline: yt-dlp/ffmpeg são baixados automaticamente.",
                 ]
@@ -109,7 +153,7 @@ fn render_onboarding(app: &mut App, ctx: &egui::Context) {
                 &[
                     "Paste a link in Download Video/Music and click Download.",
                     "Use the Queue for multiple links or playlists.",
-                    "Lumen Converter: formats, PDF, watermark and transcription.",
+                    "Converter: formats, PDF, watermark and transcription.",
                     "Ctrl+K opens the command palette; F11 = fullscreen.",
                     "Self-contained: yt-dlp/ffmpeg download automatically.",
                 ]
@@ -312,96 +356,105 @@ fn render_confirm_delete(app: &mut App, ctx: &egui::Context) {
     }
 }
 
-fn fmt_time(d: std::time::Duration) -> String {
-    let total = d.as_secs();
-    format!("{:02}:{:02}", total / 60, total % 60)
+fn render_confirm_delete_folder(app: &mut App, ctx: &egui::Context) {
+    let Some((id, name, path)) = app.pending_delete_folder.clone() else {
+        return;
+    };
+    let pt = app.config.lang == crate::ui::i18n::Lang::Pt;
+    let is_default = app.config.default_download_dir.to_string_lossy() == path.as_str();
+
+    let mut confirm = false;
+    let mut cancel = false;
+    egui::Window::new(if pt { "Excluir pasta?" } else { "Delete folder?" })
+        .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+        .collapsible(false)
+        .resizable(false)
+        .default_width(400.0)
+        .show(ctx, |ui| {
+            ui.set_max_width(420.0);
+            ui.label(egui::RichText::new(&name).color(theme::text()).strong());
+            ui.label(egui::RichText::new(&path).color(theme::text_faint()).size(11.0));
+            ui.add_space(8.0);
+            ui.label(
+                egui::RichText::new(if pt {
+                    "⚠ Isso apaga a pasta e TODO o seu conteúdo do disco (vai para a Lixeira do sistema, recuperável)."
+                } else {
+                    "⚠ This deletes the folder and ALL its contents from disk (moved to the system Recycle Bin, recoverable)."
+                })
+                .color(theme::danger()),
+            );
+            if is_default {
+                ui.add_space(4.0);
+                ui.label(
+                    egui::RichText::new(if pt {
+                        "Esta é a pasta padrão de downloads."
+                    } else {
+                        "This is the default download folder."
+                    })
+                    .color(theme::text_muted())
+                    .size(12.0),
+                );
+            }
+            ui.add_space(12.0);
+            ui.horizontal(|ui| {
+                if ui
+                    .add(theme::accent_button(if pt { "🗑 Excluir pasta" } else { "🗑 Delete folder" }))
+                    .clicked()
+                {
+                    confirm = true;
+                }
+                if ui.add(theme::ghost_button(if pt { "Cancelar" } else { "Cancel" })).clicked() {
+                    cancel = true;
+                }
+            });
+        });
+
+    if confirm {
+        app.delete_folder(id, path);
+        app.pending_delete_folder = None;
+    } else if cancel {
+        app.pending_delete_folder = None;
+    }
 }
 
-fn render_mini_player(app: &mut App, ctx: &egui::Context) {
-    if !app.mini.is_active() {
-        return;
+/// Botão de ícone da barra lateral.
+///
+/// O ícone é posicionado pelo *ink* do glifo (`mesh_bounds`), não pela caixa da
+/// linha. Cada ícone daqui cai numa fonte diferente da cadeia de fallback
+/// (NotoEmoji, emoji-icon-font, Segoe UI Symbol, Segoe UI Emoji) e cada fonte tem
+/// ascent/descent próprios — centralizar a caixa da linha, que é o que o
+/// `egui::Button` faz, deixa um ícone alto e o outro baixo. Centralizar o
+/// desenho de fato é o que mantém os dois alinhados entre si.
+fn sidebar_icon_button(ui: &mut egui::Ui, icon: &str, tooltip: &str) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(30.0, 28.0), egui::Sense::click());
+
+    let (fill, stroke) = if resp.is_pointer_button_down_on() {
+        (theme::accent(), egui::Stroke::new(1.0, theme::accent()))
+    } else if resp.hovered() {
+        (theme::bg_card_hover(), egui::Stroke::new(1.0, theme::accent()))
+    } else {
+        (Color32::TRANSPARENT, egui::Stroke::new(1.0, theme::border()))
+    };
+    ui.painter()
+        .rect(rect, egui::Rounding::same(8.0), fill, stroke);
+
+    let galley = ui.painter().layout_no_wrap(
+        icon.to_owned(),
+        egui::FontId::proportional(15.0),
+        theme::text(),
+    );
+    let ink = galley.mesh_bounds;
+    let pos = if ink.is_finite() && ink.is_positive() {
+        rect.center() - ink.center().to_vec2()
+    } else {
+        rect.center() - galley.rect.center().to_vec2()
+    };
+    ui.painter().galley(pos, galley, theme::text());
+
+    if resp.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
-    let pt = app.config.lang == crate::ui::i18n::Lang::Pt;
-    egui::TopBottomPanel::bottom("mini_player")
-        .frame(
-            egui::Frame::none()
-                .fill(theme::bg_sidebar())
-                .stroke(egui::Stroke::new(1.0, theme::border()))
-                .inner_margin(egui::Margin::symmetric(16.0, 8.0)),
-        )
-        .show(ctx, |ui| {
-            let mut stop = false;
-            ui.horizontal(|ui| {
-                let icon = if app.mini.playing { "⏸" } else { "▶" };
-                if ui
-                    .add(
-                        egui::Button::new(
-                            egui::RichText::new(icon).size(15.0).color(egui::Color32::WHITE),
-                        )
-                        .fill(theme::accent())
-                        .min_size(egui::vec2(38.0, 32.0)),
-                    )
-                    .on_hover_text(if pt { "Tocar/pausar" } else { "Play/pause" })
-                    .clicked()
-                {
-                    app.mini.toggle();
-                }
-                if ui
-                    .add(theme::ghost_button("⏹"))
-                    .on_hover_text(if pt { "Parar" } else { "Stop" })
-                    .clicked()
-                {
-                    stop = true;
-                }
-                ui.add_space(8.0);
-                ui.vertical(|ui| {
-                    ui.label(
-                        egui::RichText::new(format!("🎧  {}", app.mini.title))
-                            .color(theme::text())
-                            .strong(),
-                    );
-                    let time = format!(
-                        "{} / {}",
-                        fmt_time(app.mini.elapsed()),
-                        app.mini
-                            .duration
-                            .map(fmt_time)
-                            .unwrap_or_else(|| "--:--".to_string()),
-                    );
-                    ui.label(
-                        egui::RichText::new(time)
-                            .color(theme::text_muted())
-                            .size(11.0),
-                    );
-                });
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let mut v = app.mini.volume;
-                    if ui
-                        .add(
-                            egui::Slider::new(&mut v, 0.0..=1.0)
-                                .show_value(false)
-                                .handle_shape(egui::style::HandleShape::Circle),
-                        )
-                        .changed()
-                    {
-                        app.mini.set_volume(v);
-                    }
-                    ui.label(egui::RichText::new("🔊").color(theme::text_muted()));
-                });
-            });
-            if let Some(dur) = app.mini.duration {
-                let frac = (app.mini.elapsed().as_secs_f32() / dur.as_secs_f32().max(0.01))
-                    .clamp(0.0, 1.0);
-                ui.add(egui::ProgressBar::new(frac).desired_height(4.0));
-            }
-            if stop {
-                app.mini.stop();
-            }
-        });
-    // Atualiza o tempo enquanto toca.
-    if app.mini.playing {
-        ctx.request_repaint_after(std::time::Duration::from_millis(250));
-    }
+    resp.on_hover_text(tooltip)
 }
 
 pub fn render_tab_content(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui, tab: Tab) {
@@ -412,10 +465,8 @@ pub fn render_tab_content(app: &mut App, ctx: &egui::Context, ui: &mut egui::Ui,
         Tab::Converter => crate::ui::converter_tab::render(app, ctx, ui),
         Tab::Queue => crate::ui::queue_tab::render(app, ctx, ui),
         Tab::Folders => crate::ui::folders_tab::render(app, ctx, ui),
-        Tab::Gallery => crate::ui::gallery_tab::render(app, ctx, ui),
         Tab::Games => crate::ui::games_tab::render(app, ctx, ui),
         Tab::Cloud => crate::ui::cloud_tab::render(app, ctx, ui),
-        Tab::Stats => crate::ui::stats_tab::render(app, ctx, ui),
         Tab::Achievements => crate::ui::achievements_tab::render(app, ctx, ui),
         Tab::Settings => crate::ui::settings_tab::render(app, ctx, ui),
         Tab::Help => crate::ui::help_tab::render(app, ctx, ui),
@@ -430,10 +481,8 @@ fn tab_title(tab: Tab, s: &crate::ui::i18n::Strings) -> &'static str {
         Tab::Converter => s.nav_converter,
         Tab::Queue => s.nav_queue,
         Tab::Folders => s.nav_folders,
-        Tab::Gallery => s.nav_gallery,
         Tab::Games => s.nav_games,
         Tab::Cloud => s.nav_cloud,
-        Tab::Stats => s.nav_stats,
         Tab::Achievements => s.nav_achievements,
         Tab::Settings => s.nav_settings,
         Tab::Help => s.nav_help,
@@ -869,34 +918,37 @@ fn render_sidebar(app: &mut App, ctx: &egui::Context) {
             if app.brand_texture.is_none() {
                 app.brand_texture = crate::app::load_brand_texture(ui.ctx());
             }
-            if let Some(tex) = &app.brand_texture {
-                let [tw, th] = tex.size();
-                let w = ui.available_width();
-                let h = (w * th as f32 / tw.max(1) as f32).min(48.0);
-                let w = h * tw as f32 / th.max(1) as f32;
-                ui.add(egui::Image::from_texture((tex.id(), egui::vec2(w, h))));
-            } else {
-                ui.label(egui::RichText::new("◆ Lumen").size(22.0).strong().color(theme::accent()));
-            }
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 8.0;
+                if let Some(tex) = &app.brand_texture {
+                    let [tw, th] = tex.size();
+                    let h = 42.0;
+                    let w = h * tw as f32 / th.max(1) as f32;
+                    ui.add(egui::Image::from_texture((tex.id(), egui::vec2(w, h))));
+                }
+                ui.label(
+                    egui::RichText::new("Lumen Stream")
+                        .size(19.0)
+                        .strong()
+                        .color(theme::text()),
+                );
+            });
             ui.add_space(4.0);
             ui.horizontal(|ui| {
-                let icon_btn = |txt: &str| {
-                    egui::Button::new(egui::RichText::new(txt).size(15.0))
-                        .fill(egui::Color32::TRANSPARENT)
-                        .min_size(egui::vec2(30.0, 28.0))
-                };
-                if ui.add(icon_btn("🧰")).on_hover_text("Ctrl+K").clicked() {
+                if sidebar_icon_button(ui, "🧰", "Ctrl+K").clicked() {
                     app.cmd_palette_open = true;
                     app.cmd_query.clear();
                 }
-                if ui
-                    .add(icon_btn("⧉"))
-                    .on_hover_text(if app.config.lang == crate::ui::i18n::Lang::Pt {
+                if sidebar_icon_button(
+                    ui,
+                    "⧉",
+                    if app.config.lang == crate::ui::i18n::Lang::Pt {
                         "Abrir aba em nova janela"
                     } else {
                         "Open tab in a new window"
-                    })
-                    .clicked()
+                    },
+                )
+                .clicked()
                 {
                     if !app.detached.contains(&app.active_tab) {
                         app.detached.push(app.active_tab);
@@ -914,10 +966,8 @@ fn render_sidebar(app: &mut App, ctx: &egui::Context) {
                 ("🔄", s.nav_converter, Tab::Converter),
                 ("📋", s.nav_queue, Tab::Queue),
                 ("📁", s.nav_folders, Tab::Folders),
-                ("🖼", s.nav_gallery, Tab::Gallery),
                 ("🎮", s.nav_games, Tab::Games),
                 ("☁", s.nav_cloud, Tab::Cloud),
-                ("📊", s.nav_stats, Tab::Stats),
                 ("🏆", s.nav_achievements, Tab::Achievements),
                 ("⚙", s.nav_settings, Tab::Settings),
                 ("❓", s.nav_help, Tab::Help),
@@ -939,7 +989,14 @@ fn render_sidebar(app: &mut App, ctx: &egui::Context) {
             ui.add_space(6.0);
             storage_footer(ui, app);
             ui.add_space(6.0);
-            credit_footer(ui, app.config.lang == crate::ui::i18n::Lang::Pt);
+            if app.connection_texture.is_none() {
+                app.connection_texture = crate::app::load_connection_texture(ui.ctx());
+            }
+            credit_footer(
+                ui,
+                app.connection_texture.as_ref(),
+                app.config.lang == crate::ui::i18n::Lang::Pt,
+            );
         });
 }
 
@@ -1035,7 +1092,7 @@ fn disk_usage(folder: &std::path::Path) -> (i64, i64) {
     }
 }
 
-fn credit_footer(ui: &mut egui::Ui, pt: bool) {
+fn credit_footer(ui: &mut egui::Ui, logo: Option<&egui::TextureHandle>, pt: bool) {
     const URL: &str = "https://lumenconnection.com.br/";
 
     ui.label(
@@ -1058,14 +1115,45 @@ fn credit_footer(ui: &mut egui::Ui, pt: bool) {
 
     let cx = rect.min.x + 18.0;
     let cy = rect.center().y;
-    ui.painter().circle_filled(egui::pos2(cx, cy), 13.0, theme::accent());
-    ui.painter().text(
-        egui::pos2(cx, cy),
-        egui::Align2::CENTER_CENTER,
-        "◆",
-        egui::FontId::proportional(13.0),
-        egui::Color32::WHITE,
-    );
+    match logo {
+        Some(tex) => {
+            // Recorta a logo num disco (formato circular): malha em leque com o UV
+            // mapeado para o círculo inscrito na imagem quadrada.
+            let r = 14.0;
+            let center = egui::pos2(cx, cy);
+            let n = 48usize;
+            let mut mesh = egui::Mesh::with_texture(tex.id());
+            mesh.vertices.push(egui::epaint::Vertex {
+                pos: center,
+                uv: egui::pos2(0.5, 0.5),
+                color: egui::Color32::WHITE,
+            });
+            for i in 0..=n {
+                let a = i as f32 / n as f32 * std::f32::consts::TAU;
+                let (sin, cos) = a.sin_cos();
+                mesh.vertices.push(egui::epaint::Vertex {
+                    pos: egui::pos2(center.x + cos * r, center.y + sin * r),
+                    uv: egui::pos2(0.5 + cos * 0.5, 0.5 + sin * 0.5),
+                    color: egui::Color32::WHITE,
+                });
+            }
+            for i in 1..=n as u32 {
+                mesh.indices.extend_from_slice(&[0, i, i + 1]);
+            }
+            ui.painter().add(egui::Shape::mesh(mesh));
+        }
+        None => {
+            // Fallback (imagem não carregou): losango desenhado.
+            ui.painter().circle_filled(egui::pos2(cx, cy), 13.0, theme::accent());
+            ui.painter().text(
+                egui::pos2(cx, cy),
+                egui::Align2::CENTER_CENTER,
+                "◆",
+                egui::FontId::proportional(13.0),
+                egui::Color32::WHITE,
+            );
+        }
+    }
 
     ui.painter().text(
         egui::pos2(rect.min.x + 40.0, cy - 8.0),
