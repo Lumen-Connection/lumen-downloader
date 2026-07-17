@@ -20,10 +20,17 @@ jobs:
       - name: Build otimizado
         run: cargo build --release
 
-      - name: Empacotar
+      - name: Empacotar versão portátil
         run: Compress-Archive -Path target/release/lumen-stream.exe -DestinationPath lumen-stream-windows.zip
 
+      - name: Gerar instalador (Inno Setup)
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart("v")   # tag v1.0.0 -> 1.0.0
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DAppVersion=$version installer.iss
+
       - name: Publicar Release
-        uses: softprops/action-gh-release@v2   # cria o Release e anexa o zip
+        uses: softprops/action-gh-release@v2   # cria o Release e anexa os arquivos
         with:
-          files: lumen-stream-windows.zip
+          files: |
+            dist/LumenStream-Setup-*.exe
+            lumen-stream-windows.zip
