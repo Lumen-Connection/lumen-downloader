@@ -10,6 +10,6 @@ jobs:
     runs-on: windows-latest   # VM Windows, igual ao ambiente dos seus usuários
     steps:
       - uses: actions/checkout@v4   # passo 1: clona seu código na VM
-
+      - uses: Swatinem/rust-cache@v2
       - name: Rodar testes
         run: cargo test               # passo 2: os seus 76 testes

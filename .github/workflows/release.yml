@@ -1,0 +1,29 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]              # só dispara para tags tipo v0.1.0
+
+permissions:
+  contents: write             # autoriza o workflow a criar o Release
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Testes
+        run: cargo test       # nunca lançar algo que quebrou
+
+      - name: Build otimizado
+        run: cargo build --release
+
+      - name: Empacotar
+        run: Compress-Archive -Path target/release/lumen-stream.exe -DestinationPath lumen-stream-windows.zip
+
+      - name: Publicar Release
+        uses: softprops/action-gh-release@v2   # cria o Release e anexa o zip
+        with:
+          files: lumen-stream-windows.zip
